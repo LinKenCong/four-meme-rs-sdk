@@ -16,7 +16,7 @@ impl FourMemeSdk {
         nft.balanceOf(owner)
             .call()
             .await
-            .map_err(|error| SdkError::Contract(error.to_string()))
+            .map_err(|error| SdkError::rpc_provider("EIP-8004 balance", error))
     }
 
     pub async fn register_agent(
@@ -28,7 +28,7 @@ impl FourMemeSdk {
     ) -> Result<AgentRegistration> {
         let name = name.as_ref().trim();
         if name.is_empty() {
-            return Err(SdkError::MissingField("name"));
+            return Err(SdkError::validation("name", "missing required field"));
         }
         let agent_uri =
             build_agent_uri(name, image_url.as_ref().trim(), description.as_ref().trim());
@@ -39,10 +39,12 @@ impl FourMemeSdk {
             .register(agent_uri.clone())
             .send()
             .await
-            .map_err(|error| SdkError::Contract(error.to_string()))?
+            .map_err(|error| SdkError::transaction_failed("register EIP-8004 agent", error))?
             .get_receipt()
             .await
-            .map_err(|error| SdkError::Contract(error.to_string()))?;
+            .map_err(|error| {
+                SdkError::transaction_failed("register EIP-8004 agent receipt", error)
+            })?;
         Ok(AgentRegistration {
             tx_hash: receipt.transaction_hash,
             agent_id: None,

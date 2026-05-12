@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::client::FourMemeSdk;
 use crate::contracts::TokenManager2;
-use crate::error::{Result, SdkError};
+use crate::error::{RedactedContext, Result, SdkError};
 use crate::types::{
     ApiEnvelope, CreateTokenApiOutput, CreateTokenImage, CreateTokenRequest, RaisedToken,
     RankingRequest, TokenSearchRequest,
@@ -38,13 +38,13 @@ impl FourMemeSdk {
         request: CreateTokenRequest,
     ) -> Result<CreateTokenApiOutput> {
         if request.name.trim().is_empty() {
-            return Err(SdkError::MissingField("name"));
+            return Err(SdkError::validation("name", "missing required field"));
         }
         if request.short_name.trim().is_empty() {
-            return Err(SdkError::MissingField("short_name"));
+            return Err(SdkError::validation("short_name", "missing required field"));
         }
         if request.desc.trim().is_empty() {
-            return Err(SdkError::MissingField("desc"));
+            return Err(SdkError::validation("desc", "missing required field"));
         }
         if let Some(tax) = &request.token_tax_info {
             tax.validate()?;
@@ -92,7 +92,7 @@ impl FourMemeSdk {
         let signature = signer
             .sign_message(message.as_bytes())
             .await
-            .map_err(|error| SdkError::Transaction(error.to_string()))?;
+            .map_err(|error| SdkError::signing("login message", error))?;
         let login_body = json!({
             "region": "WEB",
             "langType": "EN",
@@ -124,8 +124,10 @@ impl FourMemeSdk {
             .header("meme-web-access", access_token)
             .multipart(form)
             .send()
-            .await?;
-        self.decode_envelope(response).await
+            .await
+            .map_err(|error| SdkError::http("upload token image", error))?;
+        self.decode_envelope("/private/token/upload", response)
+            .await
     }
 
     async fn preferred_raised_token(&self) -> Result<RaisedToken> {
@@ -145,7 +147,7 @@ impl FourMemeSdk {
             .find(|token| token.symbol == "BNB")
             .cloned()
             .or_else(|| candidates.into_iter().next())
-            .ok_or(SdkError::MissingRaisedToken)
+            .ok_or_else(|| SdkError::config("raised_token", "no raised token config is available"))
     }
 
     fn build_create_token_body(
@@ -201,7 +203,7 @@ impl FourMemeSdk {
             ._launchFee()
             .call()
             .await
-            .map_err(|error| SdkError::Contract(error.to_string()))?;
+            .map_err(|error| SdkError::rpc_provider("contract call", error))?;
         let pre_sale = body["preSale"]
             .as_str()
             .and_then(|value| value.parse::<f64>().ok())
@@ -214,7 +216,7 @@ impl FourMemeSdk {
             ._tradingFeeRate()
             .call()
             .await
-            .map_err(|error| SdkError::Contract(error.to_string()))?;
+            .map_err(|error| SdkError::rpc_provider("contract call", error))?;
         let presale_wei = bnb_to_wei_lossy(pre_sale);
         Ok(launch_fee
             + presale_wei
@@ -222,8 +224,13 @@ impl FourMemeSdk {
     }
 
     async fn get_api_data<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let response = self.http.get(self.api_url(path)).send().await?;
-        self.decode_envelope(response).await
+        let response = self
+            .http
+            .get(self.api_url(path))
+            .send()
+            .await
+            .map_err(|error| SdkError::http("GET Four.meme API", error))?;
+        self.decode_envelope(path, response).await
     }
 
     async fn post_api_data<T: DeserializeOwned, B: serde::Serialize>(
@@ -231,8 +238,14 @@ impl FourMemeSdk {
         path: &str,
         body: &B,
     ) -> Result<T> {
-        let response = self.http.post(self.api_url(path)).json(body).send().await?;
-        self.decode_envelope(response).await
+        let response = self
+            .http
+            .post(self.api_url(path))
+            .json(body)
+            .send()
+            .await
+            .map_err(|error| SdkError::http("POST Four.meme API", error))?;
+        self.decode_envelope(path, response).await
     }
 
     async fn post_api_data_with_access<T: DeserializeOwned, B: serde::Serialize>(
@@ -247,29 +260,52 @@ impl FourMemeSdk {
             .header("meme-web-access", access_token)
             .json(body)
             .send()
-            .await?;
-        self.decode_envelope(response).await
+            .await
+            .map_err(|error| SdkError::http("POST authenticated Four.meme API", error))?;
+        self.decode_envelope(path, response).await
     }
 
     async fn get_raw(&self, path: &str) -> Result<Value> {
-        let response = self.http.get(self.api_url(path)).send().await?;
-        Ok(response.error_for_status()?.json::<Value>().await?)
+        let response = self
+            .http
+            .get(self.api_url(path))
+            .send()
+            .await
+            .map_err(|error| SdkError::http("GET raw Four.meme API", error))?;
+        decode_raw_response("GET raw Four.meme API", response).await
     }
 
     async fn post_raw<B: serde::Serialize>(&self, path: &str, body: &B) -> Result<Value> {
-        let response = self.http.post(self.api_url(path)).json(body).send().await?;
-        Ok(response.error_for_status()?.json::<Value>().await?)
+        let response = self
+            .http
+            .post(self.api_url(path))
+            .json(body)
+            .send()
+            .await
+            .map_err(|error| SdkError::http("POST raw Four.meme API", error))?;
+        decode_raw_response("POST raw Four.meme API", response).await
     }
 
-    async fn decode_envelope<T: DeserializeOwned>(&self, response: reqwest::Response) -> Result<T> {
-        let response = response.error_for_status()?;
-        let text = response.text().await?;
-        let envelope: ApiEnvelope<T> = serde_json::from_str(&text)?;
+    async fn decode_envelope<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        response: reqwest::Response,
+    ) -> Result<T> {
+        let response = response
+            .error_for_status()
+            .map_err(|error| SdkError::http("Four.meme API status", error))?;
+        let text = response
+            .text()
+            .await
+            .map_err(|error| SdkError::http("Four.meme API body", error))?;
+        let envelope: ApiEnvelope<T> = serde_json::from_str(&text)
+            .map_err(|error| SdkError::serialization("Four.meme API envelope", error))?;
         if !envelope.is_success() {
-            return Err(SdkError::Api {
-                code: envelope.code_string(),
-                body: text,
-            });
+            return Err(SdkError::rest_business(
+                envelope.code_string(),
+                envelope.message_text(),
+                RedactedContext::new([("path", path), ("response_body", text.as_str())]),
+            ));
         }
         Ok(envelope.data)
     }
@@ -296,6 +332,19 @@ fn number_field(value: &Option<Value>) -> Option<f64> {
 
 fn body_symbol(token: &RaisedToken) -> &str {
     token.symbol.as_str()
+}
+
+async fn decode_raw_response(
+    operation: &'static str,
+    response: reqwest::Response,
+) -> Result<Value> {
+    let response = response
+        .error_for_status()
+        .map_err(|error| SdkError::http(operation, error))?;
+    response
+        .json::<Value>()
+        .await
+        .map_err(|error| SdkError::http(operation, error))
 }
 
 fn epoch_millis() -> u128 {

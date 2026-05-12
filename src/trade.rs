@@ -20,7 +20,7 @@ impl FourMemeSdk {
             .getTokenInfo(token)
             .call()
             .await
-            .map_err(|error| SdkError::Contract(error.to_string()))?;
+            .map_err(|error| SdkError::rpc_provider("get token info", error))?;
         Ok(TokenInfo {
             version: result.version.to::<u64>(),
             token_manager: result.tokenManager,
@@ -46,7 +46,7 @@ impl FourMemeSdk {
             .tryBuy(token, amount, funds)
             .call()
             .await
-            .map_err(|error| SdkError::Contract(error.to_string()))?;
+            .map_err(|error| SdkError::rpc_provider("quote buy", error))?;
         Ok(BuyQuote {
             token_manager: result.tokenManager,
             quote: optional_non_zero(result.quote),
@@ -68,7 +68,7 @@ impl FourMemeSdk {
             .trySell(token, amount)
             .call()
             .await
-            .map_err(|error| SdkError::Contract(error.to_string()))?;
+            .map_err(|error| SdkError::rpc_provider("quote sell", error))?;
         Ok(SellQuote {
             token_manager: result.tokenManager,
             quote: optional_non_zero(result.quote),
@@ -79,27 +79,47 @@ impl FourMemeSdk {
 
     pub async fn get_tax_token_info(&self, token: Address) -> Result<TaxTokenInfo> {
         let contract = TaxToken::new(token, self.provider.clone());
-        let fee_rate = contract.feeRate().call().await.map_err(contract_error)?;
+        let fee_rate = contract
+            .feeRate()
+            .call()
+            .await
+            .map_err(rpc_provider_error)?;
         let rate_founder = contract
             .rateFounder()
             .call()
             .await
-            .map_err(contract_error)?;
-        let rate_holder = contract.rateHolder().call().await.map_err(contract_error)?;
-        let rate_burn = contract.rateBurn().call().await.map_err(contract_error)?;
+            .map_err(rpc_provider_error)?;
+        let rate_holder = contract
+            .rateHolder()
+            .call()
+            .await
+            .map_err(rpc_provider_error)?;
+        let rate_burn = contract
+            .rateBurn()
+            .call()
+            .await
+            .map_err(rpc_provider_error)?;
         let rate_liquidity = contract
             .rateLiquidity()
             .call()
             .await
-            .map_err(contract_error)?;
+            .map_err(rpc_provider_error)?;
         let min_dispatch = contract
             .minDispatch()
             .call()
             .await
-            .map_err(contract_error)?;
-        let min_share = contract.minShare().call().await.map_err(contract_error)?;
-        let quote = contract.quote().call().await.map_err(contract_error)?;
-        let founder = contract.founder().call().await.map_err(contract_error)?;
+            .map_err(rpc_provider_error)?;
+        let min_share = contract
+            .minShare()
+            .call()
+            .await
+            .map_err(rpc_provider_error)?;
+        let quote = contract.quote().call().await.map_err(rpc_provider_error)?;
+        let founder = contract
+            .founder()
+            .call()
+            .await
+            .map_err(rpc_provider_error)?;
         Ok(TaxTokenInfo {
             fee_rate_bps: fee_rate.to::<u64>(),
             fee_rate_percent: fee_rate.to::<u64>() as f64 / 100.0,
@@ -143,10 +163,12 @@ impl FourMemeSdk {
         private_key: impl AsRef<str>,
         prepared: &CreateTokenApiOutput,
     ) -> Result<B256> {
-        let value = prepared
-            .creation_fee_wei
-            .parse::<U256>()
-            .map_err(|_| SdkError::InvalidAmount(prepared.creation_fee_wei.clone()))?;
+        let value = prepared.creation_fee_wei.parse::<U256>().map_err(|_| {
+            SdkError::validation(
+                "creation_fee_wei",
+                format!("invalid amount `{}`", prepared.creation_fee_wei),
+            )
+        })?;
         self.submit_create_token(
             private_key,
             &prepared.create_arg,
@@ -164,10 +186,13 @@ impl FourMemeSdk {
     ) -> Result<B256> {
         let token_info = self.get_token_info(token).await?;
         if token_info.version != 2 {
-            return Err(SdkError::UnsupportedTokenVersion {
-                version: token_info.version,
-                expected: 2,
-            });
+            return Err(SdkError::validation(
+                "token_version",
+                format!(
+                    "unsupported token version {}; expected 2",
+                    token_info.version
+                ),
+            ));
         }
         let (amount, funds) = match mode {
             BuyMode::FixedAmount { amount, .. } => (amount, U256::ZERO),
@@ -217,7 +242,10 @@ impl FourMemeSdk {
         min_funds: Option<U256>,
     ) -> Result<B256> {
         if amount == U256::ZERO {
-            return Err(SdkError::InvalidAmount(amount.to_string()));
+            return Err(SdkError::validation(
+                "amount",
+                format!("invalid amount `{amount}`"),
+            ));
         }
         let token_info = self.get_token_info(token).await?;
         let signer = signer_from_private_key(private_key)?;
@@ -260,7 +288,10 @@ impl FourMemeSdk {
         asset: Asset,
     ) -> Result<B256> {
         if amount == U256::ZERO {
-            return Err(SdkError::InvalidAmount(amount.to_string()));
+            return Err(SdkError::validation(
+                "amount",
+                format!("invalid amount `{amount}`"),
+            ));
         }
         let signer = signer_from_private_key(private_key)?;
         let provider = self.signer_provider(signer)?;
@@ -295,7 +326,11 @@ impl FourMemeSdk {
 }
 
 fn contract_error(error: impl std::fmt::Display) -> SdkError {
-    SdkError::Contract(error.to_string())
+    SdkError::transaction_failed("transaction submission", error)
+}
+
+fn rpc_provider_error(error: impl std::fmt::Display) -> SdkError {
+    SdkError::rpc_provider("contract call", error)
 }
 
 #[allow(dead_code)]

@@ -8,7 +8,7 @@ pub fn signer_from_private_key(private_key: impl AsRef<str>) -> Result<PrivateKe
     let normalized = raw.strip_prefix("0x").unwrap_or(raw);
     normalized
         .parse::<PrivateKeySigner>()
-        .map_err(|_| SdkError::InvalidPrivateKey)
+        .map_err(|_| SdkError::signing("private key parsing", "invalid private key"))
 }
 
 pub fn assert_signer_address(signer: &PrivateKeySigner, expected: Address) -> Result<()> {

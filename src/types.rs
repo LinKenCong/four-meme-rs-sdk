@@ -26,6 +26,14 @@ impl<T> ApiEnvelope<T> {
             other => other.to_string(),
         }
     }
+
+    pub(crate) fn message_text(&self) -> String {
+        self.msg
+            .as_deref()
+            .or(self.message.as_deref())
+            .unwrap_or("request failed")
+            .to_string()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,7 +100,10 @@ impl TryFrom<&str> for TokenLabel {
             "depin" => Ok(Self::Depin),
             "charity" => Ok(Self::Charity),
             "others" => Ok(Self::Others),
-            other => Err(crate::error::SdkError::InvalidLabel(other.to_string())),
+            other => Err(crate::error::SdkError::validation(
+                "label",
+                format!("invalid token label `{other}`"),
+            )),
         }
     }
 }
@@ -114,10 +125,19 @@ impl TokenTaxInfo {
     pub fn validate(&self) -> crate::Result<()> {
         let total = self.burn_rate + self.divide_rate + self.liquidity_rate + self.recipient_rate;
         if total != 100 {
-            return Err(crate::SdkError::InvalidTaxRateSum(total));
+            return Err(crate::SdkError::validation(
+                "token_tax_info",
+                format!("tax rates must sum to 100, got {total}"),
+            ));
         }
         if !matches!(self.fee_rate, 1 | 3 | 5 | 10) {
-            return Err(crate::SdkError::InvalidTaxFeeRate(self.fee_rate));
+            return Err(crate::SdkError::validation(
+                "fee_rate",
+                format!(
+                    "tax fee rate must be one of 1, 3, 5, or 10; got {}",
+                    self.fee_rate
+                ),
+            ));
         }
         Ok(())
     }
