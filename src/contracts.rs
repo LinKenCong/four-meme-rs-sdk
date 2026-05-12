@@ -1,3 +1,9 @@
+//! Contract bindings for the Four.meme and EIP-8004 interfaces used by the SDK.
+//!
+//! These ABI fragments are maintained from the public BSC contracts and intentionally
+//! contain only the calls/events this crate uses. Update `tests/abi_snapshots.rs`
+//! when an upstream ABI change is verified.
+
 use alloy::sol;
 
 sol! {
