@@ -1,0 +1,20 @@
+[package]
+name = "four_meme_sdk"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Programmatic Rust SDK for Four.meme API and BSC contracts"
+repository = ""
+
+[dependencies]
+alloy = { version = "1.0", features = ["contract", "network", "providers", "provider-http", "rpc", "rpc-types", "signers", "signer-local", "sol-types", "transports"] }
+base64 = "0.22"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
