@@ -84,10 +84,16 @@ pub enum SdkError {
     MissingField(&'static str),
     #[error("invalid token label `{0}`")]
     InvalidLabel(String),
+    #[error("invalid url in `{field}`: `{value}`")]
+    InvalidUrlField { field: &'static str, value: String },
+    #[error("invalid token image: {0}")]
+    InvalidTokenImage(String),
     #[error("tax rates must sum to 100, got {0}")]
-    InvalidTaxRateSum(u16),
+    InvalidTaxRateSum(u32),
     #[error("tax fee rate must be one of 1, 3, 5, or 10; got {0}")]
     InvalidTaxFeeRate(u16),
+    #[error("invalid raised token field `{field}`: {reason}")]
+    InvalidRaisedTokenField { field: &'static str, reason: String },
     #[error("no raised token config is available")]
     MissingRaisedToken,
     #[error("invalid block range: from_block {from_block} is greater than to_block {to_block}")]

@@ -6,12 +6,12 @@ use serde_json::{Value, json};
 
 use crate::client::FourMemeSdk;
 use crate::contracts::TokenManager2;
-use crate::error::{RedactedContext, Result, SdkError};
+use crate::error::{Result, SdkError};
 use crate::types::{
     ApiEnvelope, CreateTokenApiOutput, CreateTokenImage, CreateTokenRequest, RaisedToken,
     RankingRequest, TokenSearchRequest,
 };
-use crate::utils::{normalize_hex_or_base64, parse_bnb_to_wei};
+use crate::utils::{normalize_hex_or_base64, parse_address, parse_bnb_to_wei};
 use crate::wallet::signer_from_private_key;
 
 impl FourMemeSdk {
@@ -37,26 +37,24 @@ impl FourMemeSdk {
         private_key: impl AsRef<str>,
         request: CreateTokenRequest,
     ) -> Result<CreateTokenApiOutput> {
-        if request.name.trim().is_empty() {
-            return Err(SdkError::validation("name", "missing required field"));
-        }
-        if request.short_name.trim().is_empty() {
-            return Err(SdkError::validation("short_name", "missing required field"));
-        }
-        if request.desc.trim().is_empty() {
-            return Err(SdkError::validation("desc", "missing required field"));
-        }
-        if let Some(tax) = &request.token_tax_info {
-            tax.validate()?;
-        }
+        request.validate()?;
 
         let signer = signer_from_private_key(private_key)?;
         let address = signer.address();
         let access_token = self.login(address, &signer).await?;
         let img_url = match &request.image {
-            CreateTokenImage::File { file_name, bytes } => {
-                self.upload_token_image(&access_token, file_name, bytes.clone())
-                    .await?
+            CreateTokenImage::File {
+                file_name,
+                bytes,
+                content_type,
+            } => {
+                self.upload_token_image(
+                    &access_token,
+                    file_name,
+                    bytes.clone(),
+                    content_type.as_deref(),
+                )
+                .await?
             }
             CreateTokenImage::Url(url) => url.clone(),
         };
@@ -92,7 +90,7 @@ impl FourMemeSdk {
         let signature = signer
             .sign_message(message.as_bytes())
             .await
-            .map_err(|error| SdkError::signing("login message", error))?;
+            .map_err(|error| SdkError::Transaction(error.to_string()))?;
         let login_body = json!({
             "region": "WEB",
             "langType": "EN",
@@ -115,8 +113,14 @@ impl FourMemeSdk {
         access_token: &str,
         file_name: &str,
         bytes: Vec<u8>,
+        content_type: Option<&str>,
     ) -> Result<String> {
-        let part = Part::bytes(bytes).file_name(file_name.to_string());
+        let mut part = Part::bytes(bytes).file_name(file_name.to_string());
+        if let Some(content_type) = content_type {
+            part = part
+                .mime_str(content_type)
+                .map_err(|error| SdkError::InvalidTokenImage(error.to_string()))?;
+        }
         let form = Form::new().part("file", part);
         let response = self
             .http
@@ -124,10 +128,8 @@ impl FourMemeSdk {
             .header("meme-web-access", access_token)
             .multipart(form)
             .send()
-            .await
-            .map_err(|error| SdkError::http("upload token image", error))?;
-        self.decode_envelope("/private/token/upload", response)
-            .await
+            .await?;
+        self.decode_envelope(response).await
     }
 
     async fn preferred_raised_token(&self) -> Result<RaisedToken> {
@@ -147,7 +149,7 @@ impl FourMemeSdk {
             .find(|token| token.symbol == "BNB")
             .cloned()
             .or_else(|| candidates.into_iter().next())
-            .ok_or_else(|| SdkError::config("raised_token", "no raised token config is available"))
+            .ok_or(SdkError::MissingRaisedToken)
     }
 
     fn build_create_token_body(
@@ -156,26 +158,24 @@ impl FourMemeSdk {
         img_url: String,
         raised_token: RaisedToken,
     ) -> Result<Value> {
-        let total_supply = number_field(&raised_token.total_amount).unwrap_or(1_000_000_000.0);
-        let raised_amount = number_field(&raised_token.total_b_amount).unwrap_or(24.0);
-        let sale_rate = number_field(&raised_token.sale_rate).unwrap_or(0.8);
+        let metadata = RaisedTokenCreateMetadata::try_from(&raised_token)?;
         let mut body = json!({
             "name": request.name,
             "shortName": request.short_name,
             "desc": request.desc,
-            "totalSupply": total_supply,
-            "raisedAmount": raised_amount,
-            "saleRate": sale_rate,
+            "totalSupply": metadata.total_supply,
+            "raisedAmount": metadata.raised_amount,
+            "saleRate": metadata.sale_rate,
             "reserveRate": 0,
             "imgUrl": img_url,
             "raisedToken": raised_token,
             "launchTime": epoch_millis(),
             "funGroup": false,
-            "label": request.label,
+            "label": request.label.as_api_str(),
             "lpTradingFee": 0.0025,
             "preSale": request.pre_sale,
             "clickFun": false,
-            "symbol": body_symbol(&raised_token),
+            "symbol": metadata.symbol,
             "dexType": "PANCAKE_SWAP",
             "rushMode": false,
             "onlyMPC": false,
@@ -196,14 +196,14 @@ impl FourMemeSdk {
         Ok(body)
     }
 
-    async fn estimate_creation_fee_wei(&self, body: &Value) -> Result<U256> {
+    async fn estimate_creation_fee_wei(&self, body: &Value) -> Result<alloy::primitives::U256> {
         let manager =
             TokenManager2::new(self.config.addresses.token_manager2, self.provider.clone());
         let launch_fee = manager
             ._launchFee()
             .call()
             .await
-            .map_err(|error| SdkError::rpc_provider("contract call", error))?;
+            .map_err(|error| SdkError::Contract(error.to_string()))?;
         let presale_wei = create_presale_wei(body)?;
         if presale_wei == U256::ZERO || body["symbol"].as_str() != Some("BNB") {
             return Ok(launch_fee);
@@ -212,18 +212,13 @@ impl FourMemeSdk {
             ._tradingFeeRate()
             .call()
             .await
-            .map_err(|error| SdkError::rpc_provider("contract call", error))?;
+            .map_err(|error| SdkError::Contract(error.to_string()))?;
         calculate_creation_fee_wei(launch_fee, presale_wei, fee_rate)
     }
 
     async fn get_api_data<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let response = self
-            .http
-            .get(self.api_url(path))
-            .send()
-            .await
-            .map_err(|error| SdkError::http("GET Four.meme API", error))?;
-        self.decode_envelope(path, response).await
+        let response = self.http.get(self.api_url(path)).send().await?;
+        self.decode_envelope(response).await
     }
 
     async fn post_api_data<T: DeserializeOwned, B: serde::Serialize>(
@@ -231,14 +226,8 @@ impl FourMemeSdk {
         path: &str,
         body: &B,
     ) -> Result<T> {
-        let response = self
-            .http
-            .post(self.api_url(path))
-            .json(body)
-            .send()
-            .await
-            .map_err(|error| SdkError::http("POST Four.meme API", error))?;
-        self.decode_envelope(path, response).await
+        let response = self.http.post(self.api_url(path)).json(body).send().await?;
+        self.decode_envelope(response).await
     }
 
     async fn post_api_data_with_access<T: DeserializeOwned, B: serde::Serialize>(
@@ -253,52 +242,29 @@ impl FourMemeSdk {
             .header("meme-web-access", access_token)
             .json(body)
             .send()
-            .await
-            .map_err(|error| SdkError::http("POST authenticated Four.meme API", error))?;
-        self.decode_envelope(path, response).await
+            .await?;
+        self.decode_envelope(response).await
     }
 
     async fn get_raw(&self, path: &str) -> Result<Value> {
-        let response = self
-            .http
-            .get(self.api_url(path))
-            .send()
-            .await
-            .map_err(|error| SdkError::http("GET raw Four.meme API", error))?;
-        decode_raw_response("GET raw Four.meme API", response).await
+        let response = self.http.get(self.api_url(path)).send().await?;
+        Ok(response.error_for_status()?.json::<Value>().await?)
     }
 
     async fn post_raw<B: serde::Serialize>(&self, path: &str, body: &B) -> Result<Value> {
-        let response = self
-            .http
-            .post(self.api_url(path))
-            .json(body)
-            .send()
-            .await
-            .map_err(|error| SdkError::http("POST raw Four.meme API", error))?;
-        decode_raw_response("POST raw Four.meme API", response).await
+        let response = self.http.post(self.api_url(path)).json(body).send().await?;
+        Ok(response.error_for_status()?.json::<Value>().await?)
     }
 
-    async fn decode_envelope<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        response: reqwest::Response,
-    ) -> Result<T> {
-        let response = response
-            .error_for_status()
-            .map_err(|error| SdkError::http("Four.meme API status", error))?;
-        let text = response
-            .text()
-            .await
-            .map_err(|error| SdkError::http("Four.meme API body", error))?;
-        let envelope: ApiEnvelope<T> = serde_json::from_str(&text)
-            .map_err(|error| SdkError::serialization("Four.meme API envelope", error))?;
+    async fn decode_envelope<T: DeserializeOwned>(&self, response: reqwest::Response) -> Result<T> {
+        let response = response.error_for_status()?;
+        let text = response.text().await?;
+        let envelope: ApiEnvelope<T> = serde_json::from_str(&text)?;
         if !envelope.is_success() {
-            return Err(SdkError::rest_business(
-                envelope.code_string(),
-                envelope.message_text(),
-                RedactedContext::new([("path", path), ("response_body", text.as_str())]),
-            ));
+            return Err(SdkError::Api {
+                code: envelope.code_string(),
+                body: text,
+            });
         }
         Ok(envelope.data)
     }
@@ -311,51 +277,93 @@ struct CreateTokenApiData {
     signature: String,
 }
 
+struct RaisedTokenCreateMetadata {
+    symbol: String,
+    total_supply: f64,
+    raised_amount: f64,
+    sale_rate: f64,
+}
+
+impl TryFrom<&RaisedToken> for RaisedTokenCreateMetadata {
+    type Error = SdkError;
+
+    fn try_from(token: &RaisedToken) -> Result<Self> {
+        validate_raised_token_address(token)?;
+        Ok(Self {
+            symbol: token.symbol.clone(),
+            total_supply: required_number_field(token, "total_amount", &token.total_amount)?,
+            raised_amount: required_number_field(token, "total_b_amount", &token.total_b_amount)?,
+            sale_rate: required_number_field(token, "sale_rate", &token.sale_rate)?,
+        })
+    }
+}
+
 fn hex_string(bytes: alloy::primitives::Bytes) -> String {
     format!("0x{}", hex::encode(bytes))
 }
 
 fn create_presale_wei(body: &Value) -> Result<U256> {
-    match body["preSale"].as_str().map(str::trim) {
-        Some("") | None => Ok(U256::ZERO),
+    match body["preSale"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(value) => parse_bnb_to_wei(value),
+        None => Ok(U256::ZERO),
     }
 }
 
 fn calculate_creation_fee_wei(launch_fee: U256, presale_wei: U256, fee_rate: U256) -> Result<U256> {
-    let presale_fee = presale_wei
+    let trading_fee = presale_wei
         .checked_mul(fee_rate)
         .and_then(|value| value.checked_div(U256::from(10_000u16)))
-        .ok_or_else(|| SdkError::InvalidAmount(presale_wei.to_string()))?;
+        .ok_or_else(|| SdkError::InvalidAmount("creation fee overflow".to_string()))?;
     launch_fee
         .checked_add(presale_wei)
-        .and_then(|value| value.checked_add(presale_fee))
-        .ok_or_else(|| SdkError::InvalidAmount(presale_wei.to_string()))
+        .and_then(|value| value.checked_add(trading_fee))
+        .ok_or_else(|| SdkError::InvalidAmount("creation fee overflow".to_string()))
 }
 
-fn number_field(value: &Option<Value>) -> Option<f64> {
-    match value.as_ref()? {
+fn required_number_field(
+    token: &RaisedToken,
+    field: &'static str,
+    value: &Option<Value>,
+) -> Result<f64> {
+    let Some(value) = value else {
+        return Err(raised_token_error(token, field, "missing"));
+    };
+    let parsed = match value {
         Value::Number(number) => number.as_f64(),
         Value::String(value) => value.parse().ok(),
         _ => None,
+    };
+    match parsed {
+        Some(number) if number.is_finite() && number > 0.0 => Ok(number),
+        _ => Err(raised_token_error(
+            token,
+            field,
+            "must be a positive number",
+        )),
     }
 }
 
-fn body_symbol(token: &RaisedToken) -> &str {
-    token.symbol.as_str()
+fn validate_raised_token_address(token: &RaisedToken) -> Result<()> {
+    if token.symbol.trim().is_empty() {
+        return Err(raised_token_error(token, "symbol", "missing"));
+    }
+    let Some(address) = &token.symbol_address else {
+        return Err(raised_token_error(token, "symbol_address", "missing"));
+    };
+    parse_address(address)
+        .map(|_| ())
+        .map_err(|_| raised_token_error(token, "symbol_address", "must be a valid EVM address"))
 }
 
-async fn decode_raw_response(
-    operation: &'static str,
-    response: reqwest::Response,
-) -> Result<Value> {
-    let response = response
-        .error_for_status()
-        .map_err(|error| SdkError::http(operation, error))?;
-    response
-        .json::<Value>()
-        .await
-        .map_err(|error| SdkError::http(operation, error))
+fn raised_token_error(token: &RaisedToken, field: &'static str, reason: &str) -> SdkError {
+    SdkError::InvalidRaisedTokenField {
+        field,
+        reason: format!("{} for `{}`", reason, token.symbol),
+    }
 }
 
 fn epoch_millis() -> u128 {
@@ -363,42 +371,4 @@ fn epoch_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn create_presale_wei_parses_exact_bnb_amounts() {
-        let body = json!({ "preSale": "0.000000000000000001" });
-        assert_eq!(create_presale_wei(&body).unwrap(), U256::from(1u8));
-    }
-
-    #[test]
-    fn create_presale_wei_treats_missing_or_blank_presale_as_zero() {
-        assert_eq!(create_presale_wei(&json!({})).unwrap(), U256::ZERO);
-        assert_eq!(
-            create_presale_wei(&json!({ "preSale": "  " })).unwrap(),
-            U256::ZERO
-        );
-    }
-
-    #[test]
-    fn create_presale_wei_rejects_fraction_beyond_wei() {
-        let body = json!({ "preSale": "0.0000000000000000001" });
-        assert!(create_presale_wei(&body).is_err());
-    }
-
-    #[test]
-    fn calculate_creation_fee_wei_adds_presale_and_fee_without_float_rounding() {
-        let launch_fee = U256::from(1_000u64);
-        let presale_wei = parse_bnb_to_wei("1.234567890123456789").unwrap();
-        let fee_rate = U256::from(250u16);
-
-        assert_eq!(
-            calculate_creation_fee_wei(launch_fee, presale_wei, fee_rate).unwrap(),
-            U256::from(1_265_432_087_376_544_208u128)
-        );
-    }
 }

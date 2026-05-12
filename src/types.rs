@@ -2,6 +2,8 @@ use alloy::primitives::{Address, B256, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::utils::{parse_address, validate_https_url, validate_https_url_host};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiEnvelope<T> {
@@ -27,7 +29,7 @@ impl<T> ApiEnvelope<T> {
         }
     }
 
-    pub(crate) fn message_text(&self) -> String {
+    pub fn message_text(&self) -> String {
         self.msg
             .as_deref()
             .or(self.message.as_deref())
@@ -85,6 +87,25 @@ impl TokenLabel {
     }
 }
 
+impl Serialize for TokenLabel {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_api_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TokenLabel {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value.as_str()).map_err(serde::de::Error::custom)
+    }
+}
+
 impl TryFrom<&str> for TokenLabel {
     type Error = crate::error::SdkError;
 
@@ -123,7 +144,10 @@ pub struct TokenTaxInfo {
 
 impl TokenTaxInfo {
     pub fn validate(&self) -> crate::Result<()> {
-        let total = self.burn_rate + self.divide_rate + self.liquidity_rate + self.recipient_rate;
+        let total = u32::from(self.burn_rate)
+            + u32::from(self.divide_rate)
+            + u32::from(self.liquidity_rate)
+            + u32::from(self.recipient_rate);
         if total != 100 {
             return Err(crate::SdkError::validation(
                 "token_tax_info",
@@ -139,7 +163,14 @@ impl TokenTaxInfo {
                 ),
             ));
         }
-        Ok(())
+        match (self.recipient_rate, &self.recipient_address) {
+            (0, None) => Ok(()),
+            (0, Some(address)) if address.trim().is_empty() => Ok(()),
+            (_, Some(address)) => parse_address(address).map(|_| ()),
+            (_, None) => Err(crate::SdkError::MissingField(
+                "token_tax_info.recipient_address",
+            )),
+        }
     }
 }
 
@@ -149,7 +180,7 @@ pub struct CreateTokenRequest {
     pub name: String,
     pub short_name: String,
     pub desc: String,
-    pub label: String,
+    pub label: TokenLabel,
     pub image: CreateTokenImage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_url: Option<String>,
@@ -167,8 +198,59 @@ pub struct CreateTokenRequest {
 
 #[derive(Debug, Clone)]
 pub enum CreateTokenImage {
-    File { file_name: String, bytes: Vec<u8> },
+    File {
+        file_name: String,
+        bytes: Vec<u8>,
+        content_type: Option<String>,
+    },
     Url(String),
+}
+
+impl CreateTokenRequest {
+    pub fn validate(&self) -> crate::Result<()> {
+        validate_required_text("name", &self.name)?;
+        validate_required_text("short_name", &self.short_name)?;
+        validate_required_text("desc", &self.desc)?;
+        self.image.validate()?;
+        validate_create_token_links(self)?;
+        if let Some(tax) = &self.token_tax_info {
+            tax.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl CreateTokenImage {
+    pub fn file(file_name: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        Self::File {
+            file_name: file_name.into(),
+            bytes: bytes.into(),
+            content_type: None,
+        }
+    }
+
+    pub fn file_with_content_type(
+        file_name: impl Into<String>,
+        bytes: impl Into<Vec<u8>>,
+        content_type: impl Into<String>,
+    ) -> Self {
+        Self::File {
+            file_name: file_name.into(),
+            bytes: bytes.into(),
+            content_type: Some(content_type.into()),
+        }
+    }
+
+    pub fn validate(&self) -> crate::Result<()> {
+        match self {
+            Self::File {
+                file_name,
+                bytes,
+                content_type,
+            } => validate_image_file(file_name, bytes, content_type.as_deref()),
+            Self::Url(url) => validate_https_url("image", url),
+        }
+    }
 }
 
 impl Serialize for CreateTokenImage {
@@ -181,6 +263,93 @@ impl Serialize for CreateTokenImage {
             CreateTokenImage::Url(url) => serializer.serialize_str(url),
         }
     }
+}
+
+fn validate_required_text(field: &'static str, value: &str) -> crate::Result<()> {
+    if value.trim().is_empty() {
+        return Err(crate::SdkError::MissingField(field));
+    }
+    Ok(())
+}
+
+fn validate_create_token_links(request: &CreateTokenRequest) -> crate::Result<()> {
+    validate_optional_url("web_url", request.web_url.as_deref())?;
+    validate_optional_social_url(
+        "twitter_url",
+        request.twitter_url.as_deref(),
+        &["twitter.com", "x.com"],
+    )?;
+    validate_optional_social_url(
+        "telegram_url",
+        request.telegram_url.as_deref(),
+        &["t.me", "telegram.me", "telegram.org"],
+    )
+}
+
+fn validate_optional_url(field: &'static str, value: Option<&str>) -> crate::Result<()> {
+    let Some(value) = required_optional_text(field, value)? else {
+        return Ok(());
+    };
+    validate_https_url(field, value)
+}
+
+fn validate_optional_social_url(
+    field: &'static str,
+    value: Option<&str>,
+    allowed_hosts: &[&str],
+) -> crate::Result<()> {
+    let Some(value) = required_optional_text(field, value)? else {
+        return Ok(());
+    };
+    validate_https_url_host(field, value, allowed_hosts)
+}
+
+fn required_optional_text<'a>(
+    field: &'static str,
+    value: Option<&'a str>,
+) -> crate::Result<Option<&'a str>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.trim().is_empty() {
+        return Err(crate::SdkError::MissingField(field));
+    }
+    Ok(Some(value))
+}
+
+fn validate_image_file(
+    file_name: &str,
+    bytes: &[u8],
+    content_type: Option<&str>,
+) -> crate::Result<()> {
+    let normalized_name = file_name.trim().to_ascii_lowercase();
+    if normalized_name.is_empty() {
+        return Err(crate::SdkError::MissingField("image.file_name"));
+    }
+    if bytes.is_empty() {
+        return Err(crate::SdkError::InvalidTokenImage(
+            "file bytes are empty".to_string(),
+        ));
+    }
+    let extension_type = match normalized_name.rsplit_once('.') {
+        Some((_, "png")) => "image/png",
+        Some((_, "jpg" | "jpeg")) => "image/jpeg",
+        Some((_, "gif")) => "image/gif",
+        Some((_, "webp")) => "image/webp",
+        _ => {
+            return Err(crate::SdkError::InvalidTokenImage(
+                "file extension must be png, jpg, jpeg, gif, or webp".to_string(),
+            ));
+        }
+    };
+    if let Some(content_type) = content_type
+        && content_type != extension_type
+    {
+        return Err(crate::SdkError::InvalidTokenImage(format!(
+            "content type `{content_type}` does not match `{extension_type}`"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -274,6 +443,68 @@ impl RankingRequest {
             min_hold: None,
             max_hold: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{CreateTokenImage, CreateTokenRequest, TokenLabel, TokenTaxInfo};
+
+    fn valid_create_token_request() -> CreateTokenRequest {
+        CreateTokenRequest {
+            name: "Example Token".to_string(),
+            short_name: "EXM".to_string(),
+            desc: "Example token description".to_string(),
+            label: TokenLabel::Meme,
+            image: CreateTokenImage::Url("https://example.com/token.png".to_string()),
+            web_url: Some("https://example.com".to_string()),
+            twitter_url: Some("https://x.com/example".to_string()),
+            telegram_url: Some("https://t.me/example".to_string()),
+            pre_sale: String::new(),
+            fee_plan: false,
+            token_tax_info: None,
+        }
+    }
+
+    #[test]
+    fn serializes_token_label_as_api_value() {
+        let payload = json!({ "label": TokenLabel::DeSci });
+
+        assert_eq!(payload["label"], "De-Sci");
+    }
+
+    #[test]
+    fn validates_create_token_url_fields() {
+        let mut request = valid_create_token_request();
+        request.twitter_url = Some("https://example.com/not-twitter".to_string());
+
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn validates_image_metadata() {
+        let mut request = valid_create_token_request();
+        request.image =
+            CreateTokenImage::file_with_content_type("token.png", vec![1], "image/jpeg");
+
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn validates_tax_recipient_address() {
+        let tax = TokenTaxInfo {
+            fee_rate: 5,
+            burn_rate: 25,
+            divide_rate: 25,
+            liquidity_rate: 25,
+            recipient_rate: 25,
+            recipient_address: Some("not-an-address".to_string()),
+            min_sharing: 0,
+        };
+
+        assert!(tax.validate().is_err());
     }
 }
 
@@ -615,7 +846,7 @@ impl RawTokenManagerEvent {
 }
 
 #[cfg(test)]
-mod tests {
+mod event_tests {
     use super::EventBlockRange;
 
     #[test]
