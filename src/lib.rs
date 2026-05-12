@@ -81,7 +81,7 @@ pub mod utils;
 pub mod wallet;
 
 pub use client::FourMemeSdk;
-pub use config::{Addresses, SdkConfig};
+pub use config::{Addresses, ConfigProfile, SdkConfig};
 pub use error::{Result, SdkError};
 pub use types::{
     AgentRegistration, Asset, BuyMode, BuyQuote, CreateTokenApiOutput, CreateTokenImage,

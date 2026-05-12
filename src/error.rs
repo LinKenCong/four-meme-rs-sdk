@@ -7,6 +7,16 @@ pub type Result<T> = std::result::Result<T, SdkError>;
 pub enum SdkError {
     #[error("invalid address `{0}`")]
     InvalidAddress(String),
+    #[error("invalid contract address for `{field}`: zero address is not allowed")]
+    InvalidContractAddress { field: &'static str },
+    #[error("invalid config profile `{0}`; expected `mainnet` or `local-fork`")]
+    InvalidConfigProfile(String),
+    #[error("invalid api base url: {0}")]
+    InvalidApiBaseUrl(String),
+    #[error("invalid rpc url: {0}")]
+    InvalidRpcUrl(String),
+    #[error("invalid environment variable `{name}`: {reason}")]
+    InvalidEnvVar { name: &'static str, reason: String },
     #[error("invalid private key")]
     InvalidPrivateKey,
     #[error("invalid amount `{0}`")]

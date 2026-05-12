@@ -15,16 +15,60 @@ The crate exposes programmatic APIs that replace the TypeScript scripts from the
 ## Quick Start
 
 ```rust
-use four_meme_sdk::{FourMemeSdk, SdkConfig};
+use four_meme_sdk::FourMemeSdk;
 
 #[tokio::main]
 async fn main() -> four_meme_sdk::Result<()> {
-    let sdk = FourMemeSdk::new(SdkConfig::default())?;
+    let sdk = FourMemeSdk::mainnet()?;
     let config = sdk.public_config().await?;
     println!("raised tokens: {}", config.len());
     Ok(())
 }
 ```
+
+## Configuration Profiles
+
+`SdkConfig::mainnet()` is the default production profile. It uses BSC mainnet chain id `56`, the public Four.meme API base URL, the public BSC RPC URL, and the known Four.meme contract addresses.
+
+`SdkConfig::local_fork()` keeps the same chain id and contract addresses but points RPC calls to `http://127.0.0.1:8545`. Use this with an Anvil, Hardhat, or Foundry fork when validating transaction flows without broadcasting to mainnet:
+
+```rust
+use four_meme_sdk::FourMemeSdk;
+
+let sdk = FourMemeSdk::local_fork()?;
+assert_eq!(sdk.config().rpc_url, "http://127.0.0.1:8545");
+```
+
+For custom deployments or tests, build a config explicitly and let `FourMemeSdk::new` validate it before any provider is created:
+
+```rust
+use four_meme_sdk::{Addresses, FourMemeSdk, SdkConfig};
+
+let config = SdkConfig::local_fork()
+    .with_rpc_url("http://127.0.0.1:8545")
+    .with_addresses(Addresses::mainnet());
+let sdk = FourMemeSdk::new(config)?;
+```
+
+## Environment Loading
+
+The SDK does not load `.env` files automatically. Applications that want environment-based configuration should load their `.env` file before calling `SdkConfig::from_env()` or `FourMemeSdk::from_env()`.
+
+Supported optional variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `FOUR_MEME_PROFILE` | `mainnet` or `local-fork`; defaults to `mainnet`. |
+| `FOUR_MEME_API_BASE` | Override the Four.meme REST API base URL. |
+| `FOUR_MEME_RPC_URL` | Override the HTTP RPC endpoint. |
+| `FOUR_MEME_CHAIN_ID` | Override the chain id; the SDK currently accepts only `56`. |
+| `FOUR_MEME_TOKEN_MANAGER2` | Override the TokenManager2 contract address. |
+| `FOUR_MEME_TOKEN_MANAGER_HELPER3` | Override the TokenManagerHelper3 contract address. |
+| `FOUR_MEME_EIP8004_NFT` | Override the EIP-8004 NFT contract address. |
+
+RPC and API URLs must use `http` or `https`, and contract addresses must be non-zero addresses.
+
+Transactions require a private key passed by the caller. Keep keys in your application secret manager or local ignored `.env` file; the SDK never reads private-key variables or stores `.env` values.
 
 Transactions require a signing secret passed by the caller. The SDK never reads or stores `.env` values.
 

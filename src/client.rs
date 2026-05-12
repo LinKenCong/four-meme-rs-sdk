@@ -4,9 +4,10 @@ use alloy::signers::local::PrivateKeySigner;
 use reqwest::Client;
 use url::Url;
 
-use crate::config::{BSC_CHAIN_ID, SdkConfig};
-use crate::error::{Result, SdkError};
+use crate::config::{ConfigProfile, SdkConfig};
+use crate::error::Result;
 
+/// Four.meme SDK client for REST APIs and BSC contracts.
 #[derive(Debug, Clone)]
 pub struct FourMemeSdk {
     pub(crate) config: SdkConfig,
@@ -16,9 +17,7 @@ pub struct FourMemeSdk {
 
 impl FourMemeSdk {
     pub fn new(config: SdkConfig) -> Result<Self> {
-        if config.chain_id != BSC_CHAIN_ID {
-            return Err(SdkError::UnsupportedChain(config.chain_id));
-        }
+        config.validate()?;
         let rpc_url = Url::parse(&config.rpc_url)?;
         let provider = ProviderBuilder::new().connect_http(rpc_url).erased();
         Ok(Self {
@@ -29,7 +28,19 @@ impl FourMemeSdk {
     }
 
     pub fn mainnet() -> Result<Self> {
-        Self::new(SdkConfig::default())
+        Self::new(SdkConfig::mainnet())
+    }
+
+    pub fn local_fork() -> Result<Self> {
+        Self::new(SdkConfig::local_fork())
+    }
+
+    pub fn from_env() -> Result<Self> {
+        Self::new(SdkConfig::from_env()?)
+    }
+
+    pub fn from_profile(profile: ConfigProfile) -> Result<Self> {
+        Self::new(SdkConfig::from_profile(profile))
     }
 
     pub fn config(&self) -> &SdkConfig {
