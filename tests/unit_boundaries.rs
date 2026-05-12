@@ -1,7 +1,7 @@
 mod support;
 
 use four_meme_sdk::types::{ApiEnvelope, TokenLabel, TokenTaxInfo};
-use four_meme_sdk::utils::{bnb_to_wei_lossy, normalize_hex_or_base64, parse_address, parse_u256};
+use four_meme_sdk::utils::{normalize_hex_or_base64, parse_address, parse_bnb_to_wei, parse_u256};
 use four_meme_sdk::{SdkConfig, SdkError};
 use serde_json::json;
 use support::fixtures::token_create_log_fixture;
@@ -77,8 +77,11 @@ fn token_tax_validation_enforces_supported_fee_rate_and_sum() {
 fn parsing_helpers_report_boundary_errors() {
     assert!(parse_address("not an address").is_err());
     assert!(parse_u256("not an amount").is_err());
-    assert_eq!(bnb_to_wei_lossy(0.0).to_string(), "0");
-    assert_eq!(bnb_to_wei_lossy(1.0).to_string(), "1000000000000000000");
+    assert_eq!(parse_bnb_to_wei("0").unwrap().to_string(), "0");
+    assert_eq!(
+        parse_bnb_to_wei("1").unwrap().to_string(),
+        "1000000000000000000"
+    );
 }
 
 #[test]

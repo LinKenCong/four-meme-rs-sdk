@@ -1,4 +1,4 @@
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use alloy::signers::Signer;
 use reqwest::multipart::{Form, Part};
 use serde::de::DeserializeOwned;
@@ -11,7 +11,7 @@ use crate::types::{
     ApiEnvelope, CreateTokenApiOutput, CreateTokenImage, CreateTokenRequest, RaisedToken,
     RankingRequest, TokenSearchRequest,
 };
-use crate::utils::{bnb_to_wei_lossy, normalize_hex_or_base64};
+use crate::utils::{normalize_hex_or_base64, parse_bnb_to_wei};
 use crate::wallet::signer_from_private_key;
 
 impl FourMemeSdk {
@@ -196,7 +196,7 @@ impl FourMemeSdk {
         Ok(body)
     }
 
-    async fn estimate_creation_fee_wei(&self, body: &Value) -> Result<alloy::primitives::U256> {
+    async fn estimate_creation_fee_wei(&self, body: &Value) -> Result<U256> {
         let manager =
             TokenManager2::new(self.config.addresses.token_manager2, self.provider.clone());
         let launch_fee = manager
@@ -204,12 +204,8 @@ impl FourMemeSdk {
             .call()
             .await
             .map_err(|error| SdkError::rpc_provider("contract call", error))?;
-        let pre_sale = body["preSale"]
-            .as_str()
-            .and_then(|value| value.parse::<f64>().ok())
-            .unwrap_or(0.0);
-        let symbol_is_bnb = body["symbol"].as_str() == Some("BNB");
-        if pre_sale <= 0.0 || !symbol_is_bnb {
+        let presale_wei = create_presale_wei(body)?;
+        if presale_wei == U256::ZERO || body["symbol"].as_str() != Some("BNB") {
             return Ok(launch_fee);
         }
         let fee_rate = manager
@@ -217,10 +213,7 @@ impl FourMemeSdk {
             .call()
             .await
             .map_err(|error| SdkError::rpc_provider("contract call", error))?;
-        let presale_wei = bnb_to_wei_lossy(pre_sale);
-        Ok(launch_fee
-            + presale_wei
-            + (presale_wei * fee_rate / alloy::primitives::U256::from(10_000)))
+        calculate_creation_fee_wei(launch_fee, presale_wei, fee_rate)
     }
 
     async fn get_api_data<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
@@ -322,6 +315,24 @@ fn hex_string(bytes: alloy::primitives::Bytes) -> String {
     format!("0x{}", hex::encode(bytes))
 }
 
+fn create_presale_wei(body: &Value) -> Result<U256> {
+    match body["preSale"].as_str().map(str::trim) {
+        Some("") | None => Ok(U256::ZERO),
+        Some(value) => parse_bnb_to_wei(value),
+    }
+}
+
+fn calculate_creation_fee_wei(launch_fee: U256, presale_wei: U256, fee_rate: U256) -> Result<U256> {
+    let presale_fee = presale_wei
+        .checked_mul(fee_rate)
+        .and_then(|value| value.checked_div(U256::from(10_000u16)))
+        .ok_or_else(|| SdkError::InvalidAmount(presale_wei.to_string()))?;
+    launch_fee
+        .checked_add(presale_wei)
+        .and_then(|value| value.checked_add(presale_fee))
+        .ok_or_else(|| SdkError::InvalidAmount(presale_wei.to_string()))
+}
+
 fn number_field(value: &Option<Value>) -> Option<f64> {
     match value.as_ref()? {
         Value::Number(number) => number.as_f64(),
@@ -352,4 +363,42 @@ fn epoch_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_presale_wei_parses_exact_bnb_amounts() {
+        let body = json!({ "preSale": "0.000000000000000001" });
+        assert_eq!(create_presale_wei(&body).unwrap(), U256::from(1u8));
+    }
+
+    #[test]
+    fn create_presale_wei_treats_missing_or_blank_presale_as_zero() {
+        assert_eq!(create_presale_wei(&json!({})).unwrap(), U256::ZERO);
+        assert_eq!(
+            create_presale_wei(&json!({ "preSale": "  " })).unwrap(),
+            U256::ZERO
+        );
+    }
+
+    #[test]
+    fn create_presale_wei_rejects_fraction_beyond_wei() {
+        let body = json!({ "preSale": "0.0000000000000000001" });
+        assert!(create_presale_wei(&body).is_err());
+    }
+
+    #[test]
+    fn calculate_creation_fee_wei_adds_presale_and_fee_without_float_rounding() {
+        let launch_fee = U256::from(1_000u64);
+        let presale_wei = parse_bnb_to_wei("1.234567890123456789").unwrap();
+        let fee_rate = U256::from(250u16);
+
+        assert_eq!(
+            calculate_creation_fee_wei(launch_fee, presale_wei, fee_rate).unwrap(),
+            U256::from(1_265_432_087_376_544_208u128)
+        );
+    }
 }
