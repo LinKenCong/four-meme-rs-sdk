@@ -1,11 +1,13 @@
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, U256};
+use alloy::rpc::types::TransactionReceipt;
+use alloy::sol_types::SolEvent;
 use base64::Engine;
 use serde_json::json;
 
 use crate::client::FourMemeSdk;
 use crate::contracts::Eip8004Nft;
 use crate::error::{Result, SdkError};
-use crate::types::AgentRegistration;
+use crate::types::{AgentMetadata, AgentRegistration};
 use crate::wallet::signer_from_private_key;
 
 pub const REGISTRATION_TYPE: &str = "https://eips.ethereum.org/EIPS/eip-8004#registration-v1";
@@ -16,7 +18,7 @@ impl FourMemeSdk {
         nft.balanceOf(owner)
             .call()
             .await
-            .map_err(|error| SdkError::rpc_provider("EIP-8004 balance", error))
+            .map_err(|error| SdkError::Contract(error.to_string()))
     }
 
     pub async fn register_agent(
@@ -26,12 +28,8 @@ impl FourMemeSdk {
         image_url: impl AsRef<str>,
         description: impl AsRef<str>,
     ) -> Result<AgentRegistration> {
-        let name = name.as_ref().trim();
-        if name.is_empty() {
-            return Err(SdkError::validation("name", "missing required field"));
-        }
-        let agent_uri =
-            build_agent_uri(name, image_url.as_ref().trim(), description.as_ref().trim());
+        let metadata = AgentMetadata::new(name, image_url, description)?;
+        let agent_uri = build_agent_uri(&metadata);
         let signer = signer_from_private_key(private_key)?;
         let provider = self.signer_provider(signer)?;
         let nft = Eip8004Nft::new(self.config.addresses.eip8004_nft, provider);
@@ -39,26 +37,30 @@ impl FourMemeSdk {
             .register(agent_uri.clone())
             .send()
             .await
-            .map_err(|error| SdkError::transaction_failed("register EIP-8004 agent", error))?
+            .map_err(contract_error)?
             .get_receipt()
             .await
-            .map_err(|error| {
-                SdkError::transaction_failed("register EIP-8004 agent receipt", error)
-            })?;
+            .map_err(contract_error)?;
+        let agent_id = registered_agent_id(&receipt, self.config.addresses.eip8004_nft)?;
         Ok(AgentRegistration {
             tx_hash: receipt.transaction_hash,
-            agent_id: None,
+            agent_id,
             agent_uri,
         })
     }
 }
 
-pub fn build_agent_uri(name: &str, image_url: &str, description: &str) -> String {
+pub fn build_agent_uri(metadata: &AgentMetadata) -> String {
+    let description = if metadata.description.is_empty() {
+        "I'm four.meme trading agent"
+    } else {
+        &metadata.description
+    };
     let payload = json!({
         "type": REGISTRATION_TYPE,
-        "name": name,
-        "description": if description.is_empty() { "I'm four.meme trading agent" } else { description },
-        "image": image_url,
+        "name": &metadata.name,
+        "description": description,
+        "image": &metadata.image_url,
         "active": true,
         "supportedTrust": [""]
     });
@@ -66,7 +68,20 @@ pub fn build_agent_uri(name: &str, image_url: &str, description: &str) -> String
     format!("data:application/json;base64,{encoded}")
 }
 
-#[allow(dead_code)]
-fn tx_hash(hash: B256) -> B256 {
-    hash
+fn registered_agent_id(receipt: &TransactionReceipt, nft_address: Address) -> Result<U256> {
+    receipt
+        .inner
+        .logs()
+        .iter()
+        .filter(|log| log.address() == nft_address)
+        .find_map(|log| {
+            Eip8004Nft::Registered::decode_log(&log.inner)
+                .ok()
+                .map(|registered| registered.data.agentId)
+        })
+        .ok_or(SdkError::MissingRegisteredEvent)
+}
+
+fn contract_error(error: impl std::fmt::Display) -> SdkError {
+    SdkError::Contract(error.to_string())
 }

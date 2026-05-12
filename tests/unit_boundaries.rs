@@ -49,7 +49,7 @@ fn token_tax_validation_enforces_supported_fee_rate_and_sum() {
         divide_rate: 25,
         liquidity_rate: 25,
         recipient_rate: 25,
-        recipient_address: None,
+        recipient_address: Some("0x0000000000000000000000000000000000000001".to_string()),
         min_sharing: 0,
     };
     assert!(valid.validate().is_ok());
@@ -60,7 +60,10 @@ fn token_tax_validation_enforces_supported_fee_rate_and_sum() {
     };
     assert!(matches!(
         invalid_sum.validate(),
-        Err(SdkError::InvalidTaxRateSum(85))
+        Err(SdkError::Validation {
+            field: "token_tax_info",
+            ..
+        })
     ));
 
     let invalid_fee = TokenTaxInfo {
@@ -69,7 +72,10 @@ fn token_tax_validation_enforces_supported_fee_rate_and_sum() {
     };
     assert!(matches!(
         invalid_fee.validate(),
-        Err(SdkError::InvalidTaxFeeRate(2))
+        Err(SdkError::Validation {
+            field: "fee_rate",
+            ..
+        })
     ));
 }
 

@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::primitives::{Address, B256, U256};
 use alloy::providers::Provider;
 
 use crate::client::FourMemeSdk;
@@ -331,9 +331,4 @@ fn contract_error(error: impl std::fmt::Display) -> SdkError {
 
 fn rpc_provider_error(error: impl std::fmt::Display) -> SdkError {
     SdkError::rpc_provider("contract call", error)
-}
-
-#[allow(dead_code)]
-fn bytes(bytes: Vec<u8>) -> Bytes {
-    bytes.into()
 }

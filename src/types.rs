@@ -574,12 +574,69 @@ pub enum Asset {
     Erc20(Address),
 }
 
+/// Validated metadata used to build an EIP-8004 agent registration URI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentMetadata {
+    pub name: String,
+    pub image_url: String,
+    pub description: String,
+}
+
+impl AgentMetadata {
+    /// Creates agent metadata after trimming fields and validating the image URL.
+    pub fn new(
+        name: impl AsRef<str>,
+        image_url: impl AsRef<str>,
+        description: impl AsRef<str>,
+    ) -> crate::Result<Self> {
+        let name = require_metadata_field("name", name.as_ref())?;
+        let image_url = require_metadata_field("image_url", image_url.as_ref())?;
+        let description = normalize_optional_metadata_field(description.as_ref());
+        validate_metadata_url(&image_url)?;
+
+        Ok(Self {
+            name,
+            image_url,
+            description,
+        })
+    }
+}
+
+/// Result of an EIP-8004 agent registration transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRegistration {
     pub tx_hash: B256,
-    pub agent_id: Option<U256>,
+    pub agent_id: U256,
     pub agent_uri: String,
+}
+
+fn require_metadata_field(field: &'static str, value: &str) -> crate::Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(crate::SdkError::MissingField(field));
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_optional_metadata_field(value: &str) -> String {
+    value.trim().to_string()
+}
+
+fn validate_metadata_url(value: &str) -> crate::Result<()> {
+    let url = url::Url::parse(value).map_err(|_| crate::SdkError::InvalidField {
+        field: "image_url",
+        reason: "must be an absolute http(s) URL",
+    })?;
+    if matches!(url.scheme(), "http" | "https") {
+        Ok(())
+    } else {
+        Err(crate::SdkError::InvalidField {
+            field: "image_url",
+            reason: "must use http or https",
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

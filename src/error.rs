@@ -82,6 +82,11 @@ pub enum SdkError {
     UnsupportedTokenVersion { version: u64, expected: u64 },
     #[error("missing required field `{0}`")]
     MissingField(&'static str),
+    #[error("invalid field `{field}`: {reason}")]
+    InvalidField {
+        field: &'static str,
+        reason: &'static str,
+    },
     #[error("invalid token label `{0}`")]
     InvalidLabel(String),
     #[error("invalid url in `{field}`: `{value}`")]
@@ -104,6 +109,8 @@ pub enum SdkError {
     Contract(String),
     #[error("transaction failed: {0}")]
     Transaction(String),
+    #[error("transaction receipt did not include EIP-8004 Registered event")]
+    MissingRegisteredEvent,
     #[error("api returned error code {code}: {body}")]
     Api { code: String, body: String },
     #[error("url parse failed: {0}")]
