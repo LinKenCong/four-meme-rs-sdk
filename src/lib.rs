@@ -75,6 +75,7 @@ pub mod contracts;
 pub mod eip8004;
 pub mod error;
 pub mod events;
+pub mod receipt;
 pub mod trade;
 pub mod types;
 pub mod utils;
@@ -84,7 +85,7 @@ pub use client::FourMemeSdk;
 pub use config::{Addresses, ConfigProfile, SdkConfig};
 pub use error::{Result, SdkError};
 pub use types::{
-    AgentRegistration, Asset, BuyMode, BuyQuote, CreateTokenApiOutput, CreateTokenImage,
-    CreateTokenRequest, CreateTokenResult, RaisedToken, RankingRequest, SellQuote, TaxTokenInfo,
-    TokenEvent, TokenInfo, TokenLabel, TokenSearchRequest, TokenTaxInfo,
+    AgentRegistration, Asset, BuyMode, BuyQuote, ConfirmedReceipt, CreateTokenApiOutput,
+    CreateTokenImage, CreateTokenRequest, CreateTokenResult, RaisedToken, RankingRequest,
+    SellQuote, TaxTokenInfo, TokenEvent, TokenInfo, TokenLabel, TokenSearchRequest, TokenTaxInfo,
 };

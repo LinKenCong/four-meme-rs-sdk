@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::client::FourMemeSdk;
 use crate::contracts::Eip8004Nft;
 use crate::error::{Result, SdkError};
+use crate::receipt::confirm_receipt;
 use crate::types::{AgentMetadata, AgentRegistration};
 use crate::wallet::signer_from_private_key;
 
@@ -41,9 +42,10 @@ impl FourMemeSdk {
             .get_receipt()
             .await
             .map_err(contract_error)?;
+        let confirmed = confirm_receipt(receipt.clone())?;
         let agent_id = registered_agent_id(&receipt, self.config.addresses.eip8004_nft)?;
         Ok(AgentRegistration {
-            tx_hash: receipt.transaction_hash,
+            tx_hash: confirmed.tx_hash,
             agent_id,
             agent_uri,
         })

@@ -1,11 +1,13 @@
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 
 use crate::client::FourMemeSdk;
 use crate::contracts::{Erc20, TaxToken, TokenManager2, TokenManagerHelper3};
 use crate::error::{Result, SdkError};
+use crate::receipt::wait_for_confirmation;
 use crate::types::{
-    Asset, BuyMode, BuyQuote, CreateTokenApiOutput, SellQuote, TaxTokenInfo, TokenInfo,
+    Asset, BuyMode, BuyQuote, ConfirmedReceipt, CreateTokenApiOutput, SellQuote, TaxTokenInfo,
+    TokenInfo,
 };
 use crate::utils::{normalize_hex_or_base64, optional_non_zero};
 use crate::wallet::signer_from_private_key;
@@ -140,29 +142,26 @@ impl FourMemeSdk {
         create_arg: impl AsRef<str>,
         signature: impl AsRef<str>,
         value: U256,
-    ) -> Result<B256> {
+    ) -> Result<ConfirmedReceipt> {
         let signer = signer_from_private_key(private_key)?;
         let provider = self.signer_provider(signer)?;
         let manager = TokenManager2::new(self.config.addresses.token_manager2, provider);
         let create_arg = normalize_hex_or_base64(create_arg)?;
         let signature = normalize_hex_or_base64(signature)?;
-        let receipt = manager
+        let pending = manager
             .createToken(create_arg, signature)
             .value(value)
             .send()
             .await
-            .map_err(contract_error)?
-            .get_receipt()
-            .await
             .map_err(contract_error)?;
-        Ok(receipt.transaction_hash)
+        wait_for_confirmation(pending).await
     }
 
     pub async fn submit_prepared_create_token(
         &self,
         private_key: impl AsRef<str>,
         prepared: &CreateTokenApiOutput,
-    ) -> Result<B256> {
+    ) -> Result<ConfirmedReceipt> {
         let value = prepared.creation_fee_wei.parse::<U256>().map_err(|_| {
             SdkError::validation(
                 "creation_fee_wei",
@@ -183,7 +182,7 @@ impl FourMemeSdk {
         private_key: impl AsRef<str>,
         token: Address,
         mode: BuyMode,
-    ) -> Result<B256> {
+    ) -> Result<ConfirmedReceipt> {
         let token_info = self.get_token_info(token).await?;
         if token_info.version != 2 {
             return Err(SdkError::validation(
@@ -203,14 +202,12 @@ impl FourMemeSdk {
         let provider = self.signer_provider(signer)?;
         if let Some(quote_token) = quote.quote.filter(|_| quote.amount_approval > U256::ZERO) {
             let erc20 = Erc20::new(quote_token, provider.clone());
-            erc20
+            let approval = erc20
                 .approve(token_info.token_manager, quote.amount_approval)
                 .send()
                 .await
-                .map_err(contract_error)?
-                .get_receipt()
-                .await
                 .map_err(contract_error)?;
+            wait_for_confirmation(approval).await?;
         }
         let manager = TokenManager2::new(token_info.token_manager, provider);
         let pending = match mode {
@@ -227,11 +224,7 @@ impl FourMemeSdk {
                 .await
                 .map_err(contract_error)?,
         };
-        Ok(pending
-            .get_receipt()
-            .await
-            .map_err(contract_error)?
-            .transaction_hash)
+        wait_for_confirmation(pending).await
     }
 
     pub async fn execute_sell(
@@ -240,7 +233,7 @@ impl FourMemeSdk {
         token: Address,
         amount: U256,
         min_funds: Option<U256>,
-    ) -> Result<B256> {
+    ) -> Result<ConfirmedReceipt> {
         if amount == U256::ZERO {
             return Err(SdkError::validation(
                 "amount",
@@ -251,14 +244,12 @@ impl FourMemeSdk {
         let signer = signer_from_private_key(private_key)?;
         let provider = self.signer_provider(signer)?;
         let token_contract = Erc20::new(token, provider.clone());
-        token_contract
+        let approval = token_contract
             .approve(token_info.token_manager, amount)
             .send()
             .await
-            .map_err(contract_error)?
-            .get_receipt()
-            .await
             .map_err(contract_error)?;
+        wait_for_confirmation(approval).await?;
         let manager = TokenManager2::new(token_info.token_manager, provider);
         let pending = if let Some(min_funds) = min_funds {
             manager
@@ -273,11 +264,7 @@ impl FourMemeSdk {
                 .await
                 .map_err(contract_error)?
         };
-        Ok(pending
-            .get_receipt()
-            .await
-            .map_err(contract_error)?
-            .transaction_hash)
+        wait_for_confirmation(pending).await
     }
 
     pub async fn send_asset(
@@ -286,7 +273,7 @@ impl FourMemeSdk {
         to: Address,
         amount: U256,
         asset: Asset,
-    ) -> Result<B256> {
+    ) -> Result<ConfirmedReceipt> {
         if amount == U256::ZERO {
             return Err(SdkError::validation(
                 "amount",
@@ -300,26 +287,20 @@ impl FourMemeSdk {
                 let tx = alloy::rpc::types::TransactionRequest::default()
                     .to(to)
                     .value(amount);
-                Ok(provider
+                let pending = provider
                     .send_transaction(tx)
                     .await
-                    .map_err(contract_error)?
-                    .get_receipt()
-                    .await
-                    .map_err(contract_error)?
-                    .transaction_hash)
+                    .map_err(contract_error)?;
+                wait_for_confirmation(pending).await
             }
             Asset::Erc20(token) => {
                 let erc20 = Erc20::new(token, provider);
-                Ok(erc20
+                let pending = erc20
                     .transfer(to, amount)
                     .send()
                     .await
-                    .map_err(contract_error)?
-                    .get_receipt()
-                    .await
-                    .map_err(contract_error)?
-                    .transaction_hash)
+                    .map_err(contract_error)?;
+                wait_for_confirmation(pending).await
             }
         }
     }

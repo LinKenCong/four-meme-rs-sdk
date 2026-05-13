@@ -604,6 +604,15 @@ impl AgentMetadata {
 }
 
 /// Result of an EIP-8004 agent registration transaction.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmedReceipt {
+    pub tx_hash: B256,
+    pub block_number: Option<u64>,
+    pub gas_used: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRegistration {
