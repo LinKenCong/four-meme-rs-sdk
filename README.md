@@ -1,17 +1,25 @@
 # four_meme_sdk
 
-Rust SDK for integrating with Four.meme REST APIs and BSC contracts.
+Production-oriented Rust SDK for integrating with Four.meme REST APIs and BSC contracts.
 
-The crate is designed for bots, indexers, dashboards, and local-fork test harnesses that need typed access to Four.meme data and explicit transaction workflows without porting one-off TypeScript scripts.
+Use it to build bots, indexers, dashboards, and local-fork test harnesses that need typed Four.meme REST data, quote-first trading plans, event decoding, token creation preparation, and explicit transaction submission boundaries.
 
-## Capabilities
+## Status
 
-- Public REST reads: platform config, token detail, token search, and rankings.
-- Token creation: login nonce/signature, image upload or image URL payloads, create payload preparation, and `createToken` submission.
-- Trading: token info, buy/sell quotes, quote-first execution plans, required ERC-20 approvals, and asset transfers.
-- Events: recent or ranged TokenManager2 logs for creation, purchase, sale, and liquidity events.
-- EIP-8004: agent NFT balance checks, metadata URI generation, registration, and registered agent id decoding.
-- Tax tokens: tax configuration reads and token creation tax request validation.
+- Pre-1.0 SDK. Public APIs are usable, but minor-version releases may still refine names or response models.
+- Source installation from GitHub is the current recommended path until the crate is published to crates.io.
+- Write helpers can spend real BNB/tokens. Use local forks and explicit operator confirmation before any mainnet transaction.
+
+## What It Covers
+
+| Area | APIs | Transaction risk |
+| --- | --- | --- |
+| REST reads | `public_config`, `token_detail`, `token_search`, `token_rankings` | Read-only |
+| Token creation | `prepare_create_token`, `submit_create_token`, `submit_prepared_create_token` | Submit methods write |
+| Trading | `quote_*`, `plan_*`, `approve_*`, `execute_*` | Approve/execute methods write |
+| Events | `recent_events`, `events`, `events_with_chunk_size` | Read-only |
+| EIP-8004 | `eip8004_balance`, `build_agent_uri`, `register_agent` | Registration writes |
+| Transfers/tax tokens | `send_asset`, `get_tax_token_info` | Transfer writes |
 
 ## Safety Model
 
@@ -25,7 +33,46 @@ This SDK can submit irreversible BSC transactions when you call methods prefixed
 
 ## Installation
 
-Add the crate to your application:
+### From GitHub
+
+Use the Git dependency until the crate is published to crates.io. For production bots, pin a commit SHA instead of tracking `main`.
+
+```toml
+[dependencies]
+four_meme_sdk = { git = "https://github.com/LinKenCong/four-meme-rs-sdk", branch = "main" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+alloy = { version = "1.0", features = ["primitives"] }
+```
+
+Pinned production-style dependency:
+
+```toml
+[dependencies]
+four_meme_sdk = { git = "https://github.com/LinKenCong/four-meme-rs-sdk", rev = "<commit-sha>" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+alloy = { version = "1.0", features = ["primitives"] }
+```
+
+If your environment requires SSH access to GitHub, use Cargo's SSH URL form:
+
+```toml
+four_meme_sdk = { git = "ssh://git@github.com/LinKenCong/four-meme-rs-sdk.git", rev = "<commit-sha>" }
+```
+
+### From A Local Checkout
+
+Use a path dependency when developing this SDK and a downstream application together:
+
+```toml
+[dependencies]
+four_meme_sdk = { path = "../four-meme-rs-sdk" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+alloy = { version = "1.0", features = ["primitives"] }
+```
+
+### From crates.io
+
+After the package is published, install it from crates.io with:
 
 ```toml
 [dependencies]
@@ -34,11 +81,20 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 alloy = { version = "1.0", features = ["primitives"] }
 ```
 
-For local development from a checkout:
+## Quick Start
 
-```toml
-[dependencies]
-four_meme_sdk = { path = "../four-meme-rs-sdk" }
+Read platform config without signing or broadcasting:
+
+```rust,no_run
+use four_meme_sdk::{FourMemeSdk, SdkConfig};
+
+#[tokio::main]
+async fn main() -> four_meme_sdk::Result<()> {
+    let sdk = FourMemeSdk::new(SdkConfig::default())?;
+    let config = sdk.public_config().await?;
+    println!("raised tokens: {}", config.len());
+    Ok(())
+}
 ```
 
 ## Configuration
@@ -50,16 +106,16 @@ four_meme_sdk = { path = "../four-meme-rs-sdk" }
 ```rust
 use four_meme_sdk::{FourMemeSdk, SdkConfig};
 
-# fn main() -> four_meme_sdk::Result<()> {
-let sdk = FourMemeSdk::new(
-    SdkConfig::local_fork()
-        .with_rpc_url("http://127.0.0.1:8545")
-        .with_api_base("https://four.meme/meme-api/v1"),
-)?;
+fn main() -> four_meme_sdk::Result<()> {
+    let sdk = FourMemeSdk::new(
+        SdkConfig::local_fork()
+            .with_rpc_url("http://127.0.0.1:8545")
+            .with_api_base("https://four.meme/meme-api/v1"),
+    )?;
 
-assert_eq!(sdk.config().chain_id, four_meme_sdk::config::BSC_CHAIN_ID);
-# Ok(())
-# }
+    assert_eq!(sdk.config().chain_id, four_meme_sdk::config::BSC_CHAIN_ID);
+    Ok(())
+}
 ```
 
 The SDK validates configuration before constructing clients. RPC and API URLs must use `http` or `https`; contract addresses must be non-zero; chain id must be `56`.
