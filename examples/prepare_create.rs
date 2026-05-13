@@ -4,8 +4,13 @@ use four_meme_sdk::types::{CreateTokenImage, CreateTokenRequest, TokenLabel};
 
 #[tokio::main]
 async fn main() -> four_meme_sdk::Result<()> {
+    if !common::opt_in_enabled(common::ENABLE_PREPARE_CREATE_ENV) {
+        common::skip_prepare_create_example();
+        return Ok(());
+    }
+
     let Some(private_key) = common::example_private_key() else {
-        common::skip_write_example("prepare_create");
+        common::skip_prepare_create_example();
         return Ok(());
     };
 

@@ -358,6 +358,12 @@ cargo run --example public_config
 cargo check --examples --all-features
 ```
 
+Read-only examples honor `FOUR_MEME_*` SDK configuration overrides. Examples that need a token
+address use `FOUR_MEME_EXAMPLE_TOKEN_ADDRESS`. `prepare_create` is additionally gated by
+`FOUR_MEME_EXAMPLE_ENABLE_PREPARE_CREATE=1` and `FOUR_MEME_EXAMPLE_PRIVATE_KEY` because it calls
+the Four.meme preparation API, even though it does not broadcast a chain transaction. Transaction
+examples use `FOUR_MEME_FORK_RPC_URL` and should be run only against a local fork.
+
 ## Module Map
 
 - `api`: REST reads and token creation preparation.
