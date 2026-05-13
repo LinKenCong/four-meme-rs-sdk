@@ -4,9 +4,10 @@
 
 ## Validation
 
-- [ ] `cargo fmt --check`
+- [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings`
 - [ ] `cargo test --all-targets --all-features`
+- [ ] `cargo check --examples --all-features`
 - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` (if public docs changed)
 - [ ] Secret hygiene check: `rg -n "(PRIVATE_KEY|meme-web-access|0x[a-fA-F0-9]{64})" .`
 

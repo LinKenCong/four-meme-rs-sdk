@@ -274,7 +274,7 @@ Docs in this repository avoid broadcasting to mainnet. For application-level end
 Repository quality gate:
 
 ```bash
-cargo fmt --check
+cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 cargo check --examples --all-features

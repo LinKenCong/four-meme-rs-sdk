@@ -9,9 +9,10 @@ Thank you for helping improve `four_meme_sdk`. This project aims to be safe by d
 3. Run the validation commands before opening a pull request:
 
 ```bash
-cargo fmt --check
+cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
+cargo check --examples --all-features
 ```
 
 If public Rust docs or doc comments changed, also run:
@@ -58,9 +59,10 @@ Before requesting review, confirm that:
 - [ ] Tests or documented validation steps cover the change.
 - [ ] No real secrets, private keys, access tokens, seed phrases, or absolute user paths are included.
 - [ ] Mainnet-writing behavior is either absent or clearly documented with safety warnings.
-- [ ] `cargo fmt --check` passes.
+- [ ] `cargo fmt --all -- --check` passes.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo test --all-targets --all-features` passes.
+- [ ] `cargo check --examples --all-features` passes.
 
 ## Issue Guidance
 

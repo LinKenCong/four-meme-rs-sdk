@@ -33,4 +33,4 @@ Expected secret-scan matches are limited to documentation warnings, protocol/hea
 
 - [ ] `Cargo.toml` has `license`, `description`, `homepage`, `repository`, `documentation`, `readme`, `keywords`, `categories`, and `rust-version`.
 - [ ] `README.md`, `SECURITY.md`, `CONTRIBUTING.md`, issue templates, PR template, and CI workflow are present.
-- [ ] `cargo package --allow-dirty --no-verify` contents are reviewed before any real publish command.
+- [ ] `cargo package --no-verify --list` contents are reviewed before any real publish command.

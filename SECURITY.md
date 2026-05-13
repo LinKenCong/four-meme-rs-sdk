@@ -46,5 +46,5 @@ The SDK can create tokens, approve spenders, transfer assets, and execute trades
 ## Dependency And Supply Chain Hygiene
 
 - Review dependency updates before merging and prefer minimal feature sets.
-- Run `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` before release.
+- Run `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, `cargo check --examples --all-features`, and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` before release.
 - Audit new code paths that parse external input, construct transactions, or handle signing material.
