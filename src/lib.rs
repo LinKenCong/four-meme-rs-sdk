@@ -68,6 +68,8 @@
 //! # }
 //! ```
 
+pub use alloy::signers::local::PrivateKeySigner;
+
 pub mod api;
 pub mod client;
 pub mod config;
@@ -89,3 +91,4 @@ pub use types::{
     CreateTokenImage, CreateTokenRequest, CreateTokenResult, RaisedToken, RankingRequest,
     SellQuote, TaxTokenInfo, TokenEvent, TokenInfo, TokenLabel, TokenSearchRequest, TokenTaxInfo,
 };
+pub use wallet::{assert_signer_address, signer_from_private_key};

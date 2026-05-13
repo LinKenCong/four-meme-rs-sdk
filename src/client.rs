@@ -213,10 +213,7 @@ impl FourMemeSdk {
         }
     }
 
-    pub(crate) fn signer_provider(
-        &self,
-        signer: PrivateKeySigner,
-    ) -> Result<DynProvider<Ethereum>> {
+    pub fn signer_provider(&self, signer: PrivateKeySigner) -> Result<DynProvider<Ethereum>> {
         let rpc_url = Url::parse(&self.config.rpc_url)?;
         Ok(ProviderBuilder::new()
             .wallet(signer)

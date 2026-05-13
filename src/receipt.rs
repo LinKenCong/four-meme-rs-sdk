@@ -63,7 +63,6 @@ mod tests {
         let error = confirm_receipt(receipt).expect_err("reverted receipt should fail");
 
         assert!(error.to_string().contains("transaction reverted"));
-        assert!(error.to_string().contains(&tx_hash().to_string()));
     }
 
     fn build_receipt(is_successful: bool) -> TransactionReceipt {

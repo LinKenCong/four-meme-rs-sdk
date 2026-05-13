@@ -73,6 +73,10 @@ impl FourMemeSdk {
         })
     }
 
+    pub async fn login_with_signer(&self, signer: &(impl Signer + Sync)) -> Result<String> {
+        self.login(signer.address(), signer).await
+    }
+
     async fn login(&self, address: Address, signer: &(impl Signer + Sync)) -> Result<String> {
         let nonce_body = json!({
             "accountAddress": address.to_string(),
