@@ -6,29 +6,43 @@ use serde_json::{Value, json};
 
 use crate::client::FourMemeSdk;
 use crate::contracts::TokenManager2;
-use crate::error::{Result, SdkError};
+use crate::error::{RedactedContext, Result, SdkError};
 use crate::types::{
-    ApiEnvelope, CreateTokenApiOutput, CreateTokenImage, CreateTokenRequest, RaisedToken,
-    RankingRequest, TokenSearchRequest,
+    ApiEnvelope, CreateTokenApiOutput, CreateTokenImage, CreateTokenRequest, PublicConfig,
+    RaisedToken, RankingRequest, TokenDetail, TokenRankingResponse, TokenSearchRequest,
+    TokenSearchResponse,
 };
 use crate::utils::{normalize_hex_or_base64, parse_address, parse_bnb_to_wei};
 use crate::wallet::signer_from_private_key;
 
 impl FourMemeSdk {
-    pub async fn public_config(&self) -> Result<Vec<RaisedToken>> {
+    pub async fn public_config(&self) -> Result<PublicConfig> {
         self.get_api_data("/public/config").await
     }
 
-    pub async fn token_detail(&self, address: Address) -> Result<Value> {
+    pub async fn token_detail(&self, address: Address) -> Result<TokenDetail> {
+        let url = format!("/private/token/get/v2?address={address}");
+        self.get_api_data(&url).await
+    }
+
+    pub async fn token_detail_raw(&self, address: Address) -> Result<Value> {
         let url = format!("/private/token/get/v2?address={address}");
         self.get_raw(&url).await
     }
 
-    pub async fn token_search(&self, request: &TokenSearchRequest) -> Result<Value> {
+    pub async fn token_search(&self, request: &TokenSearchRequest) -> Result<TokenSearchResponse> {
+        self.post_api_data("/public/token/search", request).await
+    }
+
+    pub async fn token_search_raw(&self, request: &TokenSearchRequest) -> Result<Value> {
         self.post_raw("/public/token/search", request).await
     }
 
-    pub async fn token_rankings(&self, request: &RankingRequest) -> Result<Value> {
+    pub async fn token_rankings(&self, request: &RankingRequest) -> Result<TokenRankingResponse> {
+        self.post_api_data("/public/token/ranking", request).await
+    }
+
+    pub async fn token_rankings_raw(&self, request: &RankingRequest) -> Result<Value> {
         self.post_raw("/public/token/ranking", request).await
     }
 
@@ -138,7 +152,8 @@ impl FourMemeSdk {
     }
 
     async fn preferred_raised_token(&self) -> Result<RaisedToken> {
-        let tokens = self.public_config().await?;
+        let config = self.public_config().await?;
+        let tokens = config.raised_tokens;
         let published: Vec<_> = tokens
             .iter()
             .filter(|token| token.status.as_deref() == Some("PUBLISH"))
@@ -275,12 +290,15 @@ impl FourMemeSdk {
         let text = response.text().await?;
         let envelope: ApiEnvelope<T> = serde_json::from_str(&text)?;
         if !envelope.is_success() {
-            return Err(SdkError::Api {
-                code: envelope.code_string(),
-                body: text,
-            });
+            return Err(SdkError::rest_business(
+                envelope.code_string(),
+                envelope.message_text(),
+                RedactedContext::new([("response_body", text)]),
+            ));
         }
-        Ok(envelope.data)
+        envelope.data.ok_or_else(|| {
+            SdkError::serialization("api envelope", "success response is missing data")
+        })
     }
 }
 
@@ -341,16 +359,12 @@ fn calculate_creation_fee_wei(launch_fee: U256, presale_wei: U256, fee_rate: U25
 fn required_number_field(
     token: &RaisedToken,
     field: &'static str,
-    value: &Option<Value>,
+    value: &Option<String>,
 ) -> Result<f64> {
     let Some(value) = value else {
         return Err(raised_token_error(token, field, "missing"));
     };
-    let parsed = match value {
-        Value::Number(number) => number.as_f64(),
-        Value::String(value) => value.parse().ok(),
-        _ => None,
-    };
+    let parsed = value.parse::<f64>().ok();
     match parsed {
         Some(number) if number.is_finite() && number > 0.0 => Ok(number),
         _ => Err(raised_token_error(

@@ -1,32 +1,92 @@
+use std::collections::BTreeMap;
+
 use alloy::primitives::{Address, B256, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::utils::{parse_address, validate_https_url, validate_https_url_host};
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ApiCode {
+    String(String),
+    Signed(i64),
+    Unsigned(u64),
+    Float(f64),
+    Bool(bool),
+}
+
+impl ApiCode {
+    pub fn is_success(&self) -> bool {
+        match self {
+            Self::String(code) => code == "0",
+            Self::Signed(code) => *code == 0,
+            Self::Unsigned(code) => *code == 0,
+            Self::Float(code) => code.abs() < f64::EPSILON,
+            Self::Bool(_) => false,
+        }
+    }
+
+    pub fn as_string(&self) -> String {
+        match self {
+            Self::String(code) => code.clone(),
+            Self::Signed(code) => code.to_string(),
+            Self::Unsigned(code) => code.to_string(),
+            Self::Float(code) => code.to_string(),
+            Self::Bool(code) => code.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CompatibilityFields {
+    #[serde(flatten)]
+    fields: BTreeMap<String, Value>,
+}
+
+impl CompatibilityFields {
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.fields.contains_key(key)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.fields.keys().map(String::as_str)
+    }
+
+    pub fn string(&self, key: &str) -> Option<String> {
+        self.fields.get(key).and_then(value_to_string)
+    }
+
+    pub fn number(&self, key: &str) -> Option<f64> {
+        self.fields.get(key).and_then(value_to_f64)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiEnvelope<T> {
-    pub code: Value,
+    pub code: ApiCode,
     pub msg: Option<String>,
     pub message: Option<String>,
-    pub data: T,
+    #[serde(default = "empty_api_data")]
+    pub data: Option<T>,
+}
+
+fn empty_api_data<T>() -> Option<T> {
+    None
 }
 
 impl<T> ApiEnvelope<T> {
     pub fn is_success(&self) -> bool {
-        match &self.code {
-            Value::String(code) => code == "0",
-            Value::Number(code) => code.as_i64() == Some(0),
-            _ => false,
-        }
+        self.code.is_success()
     }
 
     pub fn code_string(&self) -> String {
-        match &self.code {
-            Value::String(code) => code.clone(),
-            other => other.to_string(),
-        }
+        self.code.as_string()
     }
 
     pub fn message_text(&self) -> String {
@@ -38,22 +98,243 @@ impl<T> ApiEnvelope<T> {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicConfig {
+    pub raised_tokens: Vec<RaisedToken>,
+    #[serde(flatten)]
+    pub extra: CompatibilityFields,
+}
+
+impl PublicConfig {
+    pub fn len(&self) -> usize {
+        self.raised_tokens.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.raised_tokens.is_empty()
+    }
+
+    pub fn raised_tokens(&self) -> &[RaisedToken] {
+        &self.raised_tokens
+    }
+}
+
+impl From<Vec<RaisedToken>> for PublicConfig {
+    fn from(raised_tokens: Vec<RaisedToken>) -> Self {
+        Self {
+            raised_tokens,
+            extra: CompatibilityFields::default(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PublicConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match PublicConfigWire::deserialize(deserializer)? {
+            PublicConfigWire::List(raised_tokens) => raised_tokens.into(),
+            PublicConfigWire::Object(response) => Self {
+                raised_tokens: response.raised_tokens,
+                extra: response.extra,
+            },
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum PublicConfigWire {
+    List(Vec<RaisedToken>),
+    Object(PublicConfigObject),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicConfigObject {
+    #[serde(default, alias = "raisedToken", alias = "raisedTokenList")]
+    raised_tokens: Vec<RaisedToken>,
+    #[serde(flatten)]
+    extra: CompatibilityFields,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RaisedToken {
     pub symbol: String,
     #[serde(default)]
     pub symbol_address: Option<String>,
-    #[serde(default)]
-    pub total_amount: Option<Value>,
-    #[serde(default)]
-    pub total_b_amount: Option<Value>,
-    #[serde(default)]
-    pub sale_rate: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub total_amount: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub total_b_amount: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub sale_rate: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(flatten)]
-    pub extra: Value,
+    pub extra: CompatibilityFields,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenDetail {
+    #[serde(default, alias = "address")]
+    pub token_address: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub short_name: Option<String>,
+    #[serde(default)]
+    pub symbol: Option<String>,
+    #[serde(default)]
+    pub desc: Option<String>,
+    #[serde(default, alias = "imgUrl", alias = "iconUrl", alias = "imageUrl")]
+    pub image_url: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub version: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub launch_time: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub market_cap: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub price: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub volume_24h: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub holders: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub progress: Option<String>,
+    #[serde(default)]
+    pub raised_token: Option<RaisedToken>,
+    #[serde(flatten)]
+    pub extra: CompatibilityFields,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenSummary {
+    #[serde(default, alias = "address")]
+    pub token_address: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub short_name: Option<String>,
+    #[serde(default)]
+    pub symbol: Option<String>,
+    #[serde(default)]
+    pub desc: Option<String>,
+    #[serde(default, alias = "imgUrl", alias = "iconUrl", alias = "imageUrl")]
+    pub image_url: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub version: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub launch_time: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub market_cap: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub price: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub volume_24h: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub holders: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub progress: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub rank: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub rank_change: Option<String>,
+    #[serde(flatten)]
+    pub extra: CompatibilityFields,
+}
+
+pub type TokenSearchResponse = TokenListResponse<TokenSummary>;
+pub type TokenRankingEntry = TokenSummary;
+pub type TokenRankingResponse = TokenListResponse<TokenRankingEntry>;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenListResponse<T> {
+    pub list: Vec<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u32>,
+    #[serde(flatten)]
+    pub extra: CompatibilityFields,
+}
+
+impl<'de, T> Deserialize<'de> for TokenListResponse<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(
+            match TokenListResponseWire::<T>::deserialize(deserializer)? {
+                TokenListResponseWire::List(list) => Self::from_list(list),
+                TokenListResponseWire::Object(response) => Self::from_object(response),
+            },
+        )
+    }
+}
+
+impl<T> TokenListResponse<T> {
+    fn from_list(list: Vec<T>) -> Self {
+        Self {
+            list,
+            total: None,
+            page_index: None,
+            page_size: None,
+            extra: CompatibilityFields::default(),
+        }
+    }
+
+    fn from_object(response: TokenListResponseObject<T>) -> Self {
+        Self {
+            list: response.list,
+            total: response.total,
+            page_index: response.page_index,
+            page_size: response.page_size,
+            extra: response.extra,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum TokenListResponseWire<T> {
+    List(Vec<T>),
+    Object(TokenListResponseObject<T>),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TokenListResponseObject<T> {
+    #[serde(alias = "items", alias = "records", alias = "rows", alias = "tokens")]
+    list: Vec<T>,
+    #[serde(default)]
+    total: Option<u64>,
+    #[serde(default)]
+    page_index: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
+    #[serde(flatten)]
+    extra: CompatibilityFields,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -446,11 +727,42 @@ impl RankingRequest {
     }
 }
 
+fn deserialize_optional_string<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<Value>::deserialize(deserializer)
+        .map(|value| value.and_then(|item| value_to_string(&item)))
+}
+
+fn value_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+fn value_to_f64(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(value) => value.as_f64(),
+        Value::String(value) => value.parse().ok(),
+        Value::Bool(_) | Value::Array(_) | Value::Object(_) | Value::Null => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{CreateTokenImage, CreateTokenRequest, TokenLabel, TokenTaxInfo};
+    use super::{
+        ApiEnvelope, CreateTokenImage, CreateTokenRequest, PublicConfig, TokenDetail, TokenLabel,
+        TokenRankingResponse, TokenSearchResponse, TokenTaxInfo,
+    };
 
     fn valid_create_token_request() -> CreateTokenRequest {
         CreateTokenRequest {
@@ -505,6 +817,146 @@ mod tests {
         };
 
         assert!(tax.validate().is_err());
+    }
+
+    #[test]
+    fn parses_public_config_array_fixture() {
+        let envelope: ApiEnvelope<PublicConfig> = serde_json::from_value(json!({
+            "code": "0",
+            "msg": "ok",
+            "message": null,
+            "data": [
+                {
+                    "symbol": "BNB",
+                    "symbolAddress": "0x0000000000000000000000000000000000000001",
+                    "totalAmount": 1000000000,
+                    "totalBAmount": "24",
+                    "saleRate": 0.8,
+                    "status": "PUBLISH",
+                    "reserveRate": "0"
+                }
+            ]
+        }))
+        .expect("public config fixture should parse");
+
+        assert!(envelope.is_success());
+        let config = envelope.data.expect("success fixture has data");
+        assert_eq!(config.len(), 1);
+        let raised_token = &config.raised_tokens()[0];
+        assert_eq!(raised_token.symbol, "BNB");
+        assert_eq!(raised_token.total_amount.as_deref(), Some("1000000000"));
+        assert_eq!(raised_token.sale_rate.as_deref(), Some("0.8"));
+        assert_eq!(
+            raised_token.extra.string("reserveRate").as_deref(),
+            Some("0")
+        );
+    }
+
+    #[test]
+    fn parses_token_detail_fixture_with_compatibility_fields() {
+        let envelope: ApiEnvelope<TokenDetail> = serde_json::from_value(json!({
+            "code": 0,
+            "msg": "success",
+            "message": null,
+            "data": {
+                "address": "0x1111111111111111111111111111111111111111",
+                "name": "Example Meme",
+                "shortName": "EXM",
+                "imgUrl": "https://example.invalid/exm.png",
+                "marketCap": 12345.67,
+                "holders": "88",
+                "customField": "kept"
+            }
+        }))
+        .expect("token detail fixture should parse");
+
+        assert!(envelope.is_success());
+        let detail = envelope.data.expect("success fixture has data");
+        assert_eq!(
+            detail.token_address.as_deref(),
+            Some("0x1111111111111111111111111111111111111111")
+        );
+        assert_eq!(
+            detail.image_url.as_deref(),
+            Some("https://example.invalid/exm.png")
+        );
+        assert_eq!(detail.market_cap.as_deref(), Some("12345.67"));
+        assert_eq!(detail.extra.string("customField").as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn parses_token_search_fixture() {
+        let envelope: ApiEnvelope<TokenSearchResponse> = serde_json::from_value(json!({
+            "code": "0",
+            "msg": "success",
+            "message": null,
+            "data": {
+                "list": [
+                    {
+                        "tokenAddress": "0x2222222222222222222222222222222222222222",
+                        "shortName": "SEA",
+                        "price": "0.0001",
+                        "volume24h": 42,
+                        "unknownSearchField": true
+                    }
+                ],
+                "total": 1,
+                "pageIndex": 1,
+                "pageSize": 30,
+                "hasNext": false
+            }
+        }))
+        .expect("token search fixture should parse");
+
+        let response = envelope.data.expect("success fixture has data");
+        assert_eq!(response.total, Some(1));
+        assert_eq!(response.page_size, Some(30));
+        assert_eq!(response.list[0].short_name.as_deref(), Some("SEA"));
+        assert_eq!(response.list[0].volume_24h.as_deref(), Some("42"));
+        assert!(response.extra.contains_key("hasNext"));
+        let token = &response.list[0];
+        assert_eq!(
+            token.extra.string("unknownSearchField").as_deref(),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn parses_token_ranking_fixture_from_array_data() {
+        let envelope: ApiEnvelope<TokenRankingResponse> = serde_json::from_value(json!({
+            "code": "0",
+            "msg": "success",
+            "message": null,
+            "data": [
+                {
+                    "tokenAddress": "0x3333333333333333333333333333333333333333",
+                    "shortName": "RNK",
+                    "rank": 1,
+                    "rankChange": "-2",
+                    "marketCap": "9999"
+                }
+            ]
+        }))
+        .expect("token ranking fixture should parse");
+
+        let response = envelope.data.expect("success fixture has data");
+        assert_eq!(response.list.len(), 1);
+        assert_eq!(response.list[0].rank.as_deref(), Some("1"));
+        assert_eq!(response.list[0].rank_change.as_deref(), Some("-2"));
+        assert_eq!(response.list[0].market_cap.as_deref(), Some("9999"));
+    }
+
+    #[test]
+    fn parses_error_envelope_without_data() {
+        let envelope: ApiEnvelope<PublicConfig> = serde_json::from_value(json!({
+            "code": "40001",
+            "msg": "validation failed"
+        }))
+        .expect("error envelope without data should parse");
+
+        assert!(!envelope.is_success());
+        assert!(envelope.data.is_none());
+        assert_eq!(envelope.message_text(), "validation failed");
     }
 }
 

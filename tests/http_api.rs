@@ -13,12 +13,12 @@ use support::http::MockFourMemeApi;
 async fn public_config_reads_mocked_envelope_without_network() -> Result<()> {
     let api = MockFourMemeApi::start();
     let mock = api.get_json("/public/config", public_config_envelope());
-    let tokens = api.sdk().public_config().await?;
+    let config = api.sdk().public_config().await?;
 
     mock.assert();
-    assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].symbol, "BNB");
-    assert_eq!(tokens[0].status.as_deref(), Some("PUBLISH"));
+    assert_eq!(config.len(), 1);
+    assert_eq!(config.raised_tokens()[0].symbol, "BNB");
+    assert_eq!(config.raised_tokens()[0].status.as_deref(), Some("PUBLISH"));
     Ok(())
 }
 
@@ -32,8 +32,8 @@ async fn token_search_posts_request_to_mock_server() -> Result<()> {
         .await?;
 
     mock.assert();
-    assert_eq!(response["data"]["total"], 1);
-    assert_eq!(response["data"]["list"][0]["symbol"], "BNB");
+    assert_eq!(response.total, Some(1));
+    assert_eq!(response.list[0].symbol.as_deref(), Some("BNB"));
     Ok(())
 }
 
@@ -51,7 +51,7 @@ async fn token_detail_uses_private_detail_path() -> Result<()> {
     let response = api.sdk().token_detail(token).await?;
 
     mock.assert();
-    assert_eq!(response["data"]["address"], TEST_TOKEN_ADDRESS);
+    assert_eq!(response.token_address.as_deref(), Some(TEST_TOKEN_ADDRESS));
     Ok(())
 }
 
@@ -67,9 +67,9 @@ async fn api_errors_preserve_code_and_body() {
 
     mock.assert();
     match error {
-        SdkError::Api { code, body } => {
+        SdkError::RestBusiness { code, context, .. } => {
             assert_eq!(code, "40001");
-            assert!(body.contains("validation failed"));
+            assert!(context.to_string().contains("validation failed"));
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -93,6 +93,6 @@ async fn token_rankings_posts_request_to_mock_server() -> Result<()> {
         .await?;
 
     mock.assert();
-    assert_eq!(response["data"]["items"][0]["symbol"], "BNB");
+    assert_eq!(response.list[0].symbol.as_deref(), Some("BNB"));
     Ok(())
 }

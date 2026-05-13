@@ -58,7 +58,6 @@ pub fn token_create_log_fixture() -> Value {
 pub fn api_error_envelope() -> Value {
     json!({
         "code": "40001",
-        "msg": "validation failed",
-        "data": []
+        "msg": "validation failed"
     })
 }

@@ -87,8 +87,10 @@ pub use client::{FourMemeSdk, FourMemeSdkBuilder, RetryPolicy};
 pub use config::{Addresses, ConfigProfile, SdkConfig};
 pub use error::{Result, SdkError};
 pub use types::{
-    AgentRegistration, Asset, BuyMode, BuyQuote, ConfirmedReceipt, CreateTokenApiOutput,
-    CreateTokenImage, CreateTokenRequest, CreateTokenResult, RaisedToken, RankingRequest,
-    SellQuote, TaxTokenInfo, TokenEvent, TokenInfo, TokenLabel, TokenSearchRequest, TokenTaxInfo,
+    AgentRegistration, ApiCode, Asset, BuyMode, BuyQuote, CompatibilityFields, ConfirmedReceipt,
+    CreateTokenApiOutput, CreateTokenImage, CreateTokenRequest, CreateTokenResult, PublicConfig,
+    RaisedToken, RankingRequest, SellQuote, TaxTokenInfo, TokenDetail, TokenEvent, TokenInfo,
+    TokenLabel, TokenRankingEntry, TokenRankingResponse, TokenSearchRequest, TokenSearchResponse,
+    TokenSummary, TokenTaxInfo,
 };
 pub use wallet::{assert_signer_address, signer_from_private_key};

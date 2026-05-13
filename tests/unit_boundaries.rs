@@ -1,9 +1,8 @@
 mod support;
 
-use four_meme_sdk::types::{ApiEnvelope, TokenLabel, TokenTaxInfo};
+use four_meme_sdk::types::{ApiCode, ApiEnvelope, TokenLabel, TokenTaxInfo};
 use four_meme_sdk::utils::{normalize_hex_or_base64, parse_address, parse_bnb_to_wei, parse_u256};
 use four_meme_sdk::{SdkConfig, SdkError};
-use serde_json::json;
 use support::fixtures::token_create_log_fixture;
 
 #[test]
@@ -17,16 +16,16 @@ fn sdk_rejects_unsupported_chain_before_network_setup() {
 #[test]
 fn api_envelope_accepts_string_and_numeric_success_codes() {
     let string_code = ApiEnvelope {
-        code: json!("0"),
+        code: ApiCode::String("0".to_string()),
         msg: None,
         message: None,
-        data: (),
+        data: Some(()),
     };
     let number_code = ApiEnvelope {
-        code: json!(0),
+        code: ApiCode::Signed(0),
         msg: None,
         message: None,
-        data: (),
+        data: Some(()),
     };
 
     assert!(string_code.is_success());
