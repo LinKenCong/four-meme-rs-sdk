@@ -380,3 +380,11 @@ examples use `FOUR_MEME_FORK_RPC_URL` and should be run only against a local for
 ## License
 
 MIT
+
+## Origin
+
+This Rust SDK migrates and hardens the functionality originally provided by the
+[`@four-meme/four-meme-ai`](https://www.npmjs.com/package/@four-meme/four-meme-ai) package into a
+Rust-native API. The goal is to keep the same Four.meme integration coverage while adding typed
+models, explicit transaction planning, receipt validation, local-fork oriented examples, and
+Rust release/CI quality gates.
