@@ -1,3 +1,8 @@
+//! Configuration profiles, defaults, environment parsing, and contract address overrides.
+//!
+//! [`SdkConfig::mainnet`] targets Four.meme on BSC mainnet. [`SdkConfig::local_fork`] keeps BSC
+//! chain id `56` and mainnet contract addresses while pointing RPC calls at a local fork.
+
 use std::env;
 use std::str::FromStr;
 use std::time::Duration;

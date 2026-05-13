@@ -1,3 +1,5 @@
+//! SDK client construction, HTTP transport configuration, retry policy, and provider setup.
+
 use alloy::network::Ethereum;
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;

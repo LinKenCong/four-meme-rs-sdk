@@ -1,3 +1,9 @@
+//! REST API helpers and token creation preparation.
+//!
+//! Public REST helpers return typed response models and preserve unknown API fields through
+//! compatibility maps. Token creation preparation signs the Four.meme login challenge and builds
+//! reviewed on-chain submission data without broadcasting.
+
 use alloy::primitives::{Address, U256};
 use alloy::signers::Signer;
 use reqwest::multipart::{Form, Part};
@@ -16,36 +22,47 @@ use crate::utils::{normalize_hex_or_base64, parse_address, parse_bnb_to_wei};
 use crate::wallet::signer_from_private_key;
 
 impl FourMemeSdk {
+    /// Fetches platform raised-token configuration from Four.meme.
     pub async fn public_config(&self) -> Result<PublicConfig> {
         self.get_api_data("/public/config").await
     }
 
+    /// Fetches typed token detail for a token address.
     pub async fn token_detail(&self, address: Address) -> Result<TokenDetail> {
         let url = format!("/private/token/get/v2?address={address}");
         self.get_api_data(&url).await
     }
 
+    /// Fetches the complete token detail JSON envelope for compatibility.
     pub async fn token_detail_raw(&self, address: Address) -> Result<Value> {
         let url = format!("/private/token/get/v2?address={address}");
         self.get_raw(&url).await
     }
 
+    /// Searches public tokens with Four.meme's typed request and response shapes.
     pub async fn token_search(&self, request: &TokenSearchRequest) -> Result<TokenSearchResponse> {
         self.post_api_data("/public/token/search", request).await
     }
 
+    /// Returns the complete token search JSON envelope for compatibility.
     pub async fn token_search_raw(&self, request: &TokenSearchRequest) -> Result<Value> {
         self.post_raw("/public/token/search", request).await
     }
 
+    /// Fetches public token rankings for the supplied ranking request.
     pub async fn token_rankings(&self, request: &RankingRequest) -> Result<TokenRankingResponse> {
         self.post_api_data("/public/token/ranking", request).await
     }
 
+    /// Returns the complete ranking JSON envelope for compatibility.
     pub async fn token_rankings_raw(&self, request: &RankingRequest) -> Result<Value> {
         self.post_raw("/public/token/ranking", request).await
     }
 
+    /// Prepares token creation API output without broadcasting the chain transaction.
+    ///
+    /// This signs the Four.meme login challenge, uploads a local image when requested, normalizes
+    /// returned payloads, and estimates the value needed by `submit_prepared_create_token`.
     pub async fn prepare_create_token(
         &self,
         private_key: impl AsRef<str>,
@@ -87,6 +104,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Logs in with a caller-owned signer and returns a Four.meme access token.
     pub async fn login_with_signer(&self, signer: &(impl Signer + Sync)) -> Result<String> {
         self.login(signer.address(), signer).await
     }

@@ -1,72 +1,66 @@
-//! Programmatic Rust SDK for Four.meme REST APIs and BSC contracts.
+//! Production-oriented Rust SDK for Four.meme REST APIs and BSC contracts.
 //!
-//! This crate replaces the original TypeScript utility scripts with reusable
-//! Rust APIs for public REST reads, token creation preparation/submission,
-//! trading quotes and execution, transfers, TokenManager2 events, tax tokens,
-//! and EIP-8004 agent registration.
+//! Start with [`FourMemeSdk`] and [`SdkConfig`], then use the module that matches
+//! your workflow:
 //!
-//! # TypeScript script migration
+//! - [`api`]: typed REST reads plus token creation preparation.
+//! - [`trade`]: token info, buy/sell quotes, execution plans, submissions, transfers, and tax-token reads.
+//! - [`events`]: TokenManager2 log queries and typed event decoding for indexers.
+//! - [`eip8004`]: agent NFT balance checks, registration, and metadata URI construction.
+//! - [`utils`]: address, decimal amount, and payload parsing helpers.
+//! - [`wallet`]: local signer construction and signer-address checks.
 //!
-//! | TypeScript script | Rust SDK replacement | Coverage |
-//! | --- | --- | --- |
-//! | `get-public-config` | [`FourMemeSdk::public_config`] | Typed read API. |
-//! | `token-list` | [`FourMemeSdk::token_search`] with [`TokenSearchRequest`] | Request typed; response is dynamic JSON. |
-//! | `token-get` | [`FourMemeSdk::token_detail`] | Dynamic JSON response. |
-//! | `token-rankings` | [`FourMemeSdk::token_rankings`] with [`RankingRequest`] | Request typed; response is dynamic JSON. |
-//! | `quote-buy` | [`FourMemeSdk::quote_buy`] | Typed on-chain quote. |
-//! | `quote-sell` | [`FourMemeSdk::quote_sell`] | Typed on-chain quote. |
-//! | `execute-buy` | [`FourMemeSdk::execute_buy`] with [`BuyMode`] | Includes version check, approvals, and transaction submission. |
-//! | `execute-sell` | [`FourMemeSdk::execute_sell`] | Includes approval and transaction submission. |
-//! | `send-token` | [`FourMemeSdk::send_asset`] with [`Asset`] | Supports native BNB and ERC-20 transfers. |
-//! | `create-token-api` | [`FourMemeSdk::prepare_create_token`] with [`CreateTokenRequest`] | Login, upload, create payload, signature, and fee preparation. |
-//! | `create-token-chain` | [`FourMemeSdk::submit_create_token`] | Submits a reviewed create payload. |
-//! | `create-token-instant` | [`FourMemeSdk::prepare_create_token`] plus [`FourMemeSdk::submit_prepared_create_token`] | Split so callers can review fees before broadcasting. |
-//! | `get-token-info` | [`FourMemeSdk::get_token_info`] | Typed TokenManagerHelper3 state. |
-//! | `get-tax-token-info` | [`FourMemeSdk::get_tax_token_info`] | Typed tax token state. |
-//! | `get-recent-events` | [`FourMemeSdk::recent_events`] | Recent TokenManager2 logs. |
-//! | `verify-events` | [`FourMemeSdk::events`] | Event retrieval only; assertions/reporting stay caller-owned. |
-//! | `8004-balance` | [`FourMemeSdk::eip8004_balance`] | Typed NFT balance read. |
-//! | `8004-register` | [`FourMemeSdk::register_agent`] | Transaction and metadata URI; decoded agent id is not yet modeled. |
+//! # Safety model
 //!
-//! The SDK intentionally does not provide a CLI wrapper, load `.env` files, or
-//! persist signing material. Pass secrets only to write methods from your own
-//! secret-management boundary.
+//! Read methods, quote methods, planning methods, and methods named `prepare_*` do not broadcast
+//! transactions. Methods named `submit_*`, `execute_*`, `send_*`, or `register_*` can submit
+//! irreversible BSC transactions. The SDK never reads `.env` files or stores private keys; callers
+//! must inject signer material from their own secret-management boundary.
 //!
-//! # Read-only example
+//! Prefer local forks for development and keep mainnet write flows behind explicit operator
+//! confirmation. A local fork must preserve BSC chain id `56`; other chain ids are rejected with
+//! [`SdkError::UnsupportedChain`].
 //!
-//! ```no_run
-//! use four_meme_sdk::{FourMemeSdk, SdkConfig, TokenSearchRequest};
+//! # REST reads
+//!
+//! ```rust,no_run
+//! use four_meme_sdk::{FourMemeSdk, RankingRequest, SdkConfig, TokenSearchRequest};
 //!
 //! # async fn run() -> four_meme_sdk::Result<()> {
 //! let sdk = FourMemeSdk::new(SdkConfig::default())?;
-//! let request = TokenSearchRequest {
-//!     keyword: Some("agent".to_string()),
-//!     ..TokenSearchRequest::default()
-//! };
-//! let tokens = sdk.token_search(&request).await?;
-//! println!("{tokens}");
+//! let config = sdk.public_config().await?;
+//! let search = sdk.token_search(&TokenSearchRequest::default()).await?;
+//! let rankings = sdk.token_rankings(&RankingRequest::new("marketCap")).await?;
+//!
+//! println!("raised tokens: {}", config.len());
+//! println!("search total: {:?}", search.total);
+//! println!("ranking entries: {}", rankings.list.len());
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! # Write-flow example
+//! # Quote-first trading
 //!
-//! ```no_run
-//! use four_meme_sdk::{CreateTokenApiOutput, FourMemeSdk, SdkConfig};
+//! ```rust,no_run
+//! use alloy::primitives::U256;
+//! use four_meme_sdk::{BuyMode, FourMemeSdk, SdkConfig};
+//! use four_meme_sdk::utils::parse_address;
 //!
 //! # async fn run() -> four_meme_sdk::Result<()> {
 //! let sdk = FourMemeSdk::new(SdkConfig::default())?;
-//! let signing_secret = std::env::var("FOUR_MEME_SIGNER_SECRET").expect("set signing secret");
-//! let prepared = CreateTokenApiOutput {
-//!     create_arg: "<hex-or-base64-create-arg>".to_string(),
-//!     signature: "<hex-or-base64-signature>".to_string(),
-//!     creation_fee_wei: "0".to_string(),
+//! let token = parse_address("0x0000000000000000000000000000000000000001")?;
+//! let mode = BuyMode::FixedFunds {
+//!     funds: U256::from(1_000_000_000_000_000_u64),
+//!     min_amount: U256::from(1_u64),
 //! };
-//! let tx_hash = sdk.submit_prepared_create_token(signing_secret, &prepared).await?;
-//! println!("submitted transaction: {tx_hash}");
+//! let plan = sdk.plan_buy(token, mode).await?;
+//! println!("approval required: {}", plan.approval.is_some());
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! See the repository README for installation, local-fork E2E guidance, examples, and the
+//! TypeScript script migration matrix.
 
 pub use alloy::signers::local::PrivateKeySigner;
 
@@ -87,12 +81,12 @@ pub use client::{FourMemeSdk, FourMemeSdkBuilder, RetryPolicy};
 pub use config::{Addresses, ConfigProfile, SdkConfig};
 pub use error::{Result, SdkError};
 pub use types::{
-    AgentRegistration, ApiCode, Asset, BuyExecutionPlan, BuyExecutionResult, BuyMode, BuyPlan,
-    BuyQuote, CompatibilityFields, ConfirmedReceipt, CreateTokenApiOutput, CreateTokenImage,
-    CreateTokenRequest, CreateTokenResult, PublicConfig, RaisedToken, RankingRequest,
-    SellExecutionPlan, SellExecutionResult, SellPlan, SellQuote, TaxTokenInfo, TokenDetail,
-    TokenEvent, TokenInfo, TokenLabel, TokenRankingEntry, TokenRankingResponse, TokenSearchRequest,
-    TokenSearchResponse, TokenSummary, TokenTaxInfo, TradeApproval, TradeApprovalReceipt,
-    TradeExecutionReceipt,
+    AgentMetadata, AgentRegistration, ApiCode, Asset, BuyExecutionPlan, BuyExecutionResult,
+    BuyMode, BuyPlan, BuyQuote, CompatibilityFields, ConfirmedReceipt, CreateTokenApiOutput,
+    CreateTokenImage, CreateTokenRequest, CreateTokenResult, PublicConfig, RaisedToken,
+    RankingRequest, SellExecutionPlan, SellExecutionResult, SellPlan, SellQuote, TaxTokenInfo,
+    TokenDetail, TokenEvent, TokenInfo, TokenLabel, TokenRankingEntry, TokenRankingResponse,
+    TokenSearchRequest, TokenSearchResponse, TokenSummary, TokenTaxInfo, TradeApproval,
+    TradeApprovalReceipt, TradeExecutionReceipt,
 };
 pub use wallet::{assert_signer_address, signer_from_private_key};

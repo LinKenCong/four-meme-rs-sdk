@@ -1,3 +1,5 @@
+//! Wallet helpers for explicit signer injection.
+
 use alloy::primitives::Address;
 use alloy::signers::Signer;
 use alloy::signers::local::PrivateKeySigner;

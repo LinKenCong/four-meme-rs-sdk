@@ -1,3 +1,5 @@
+//! EIP-8004 agent NFT reads, registration, and metadata URI construction.
+
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::TransactionReceipt;
 use alloy::sol_types::SolEvent;
@@ -14,6 +16,7 @@ use crate::wallet::signer_from_private_key;
 pub const REGISTRATION_TYPE: &str = "https://eips.ethereum.org/EIPS/eip-8004#registration-v1";
 
 impl FourMemeSdk {
+    /// Reads the EIP-8004 agent NFT balance for an owner.
     pub async fn eip8004_balance(&self, owner: Address) -> Result<U256> {
         let nft = Eip8004Nft::new(self.config.addresses.eip8004_nft, self.provider.clone());
         nft.balanceOf(owner)
@@ -22,6 +25,7 @@ impl FourMemeSdk {
             .map_err(|error| SdkError::Contract(error.to_string()))
     }
 
+    /// Registers an EIP-8004 agent NFT and decodes the registered agent id from the receipt.
     pub async fn register_agent(
         &self,
         private_key: impl AsRef<str>,
@@ -52,6 +56,7 @@ impl FourMemeSdk {
     }
 }
 
+/// Builds the base64 `data:application/json` URI submitted to the EIP-8004 contract.
 pub fn build_agent_uri(metadata: &AgentMetadata) -> String {
     let description = if metadata.description.is_empty() {
         "I'm four.meme trading agent"

@@ -1,3 +1,5 @@
+//! Parsing and normalization helpers shared by SDK examples and callers.
+
 use alloy::primitives::{Address, Bytes, U256};
 use base64::Engine;
 use url::Url;

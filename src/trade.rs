@@ -1,3 +1,8 @@
+//! Contract read/write helpers for trading, transfers, and tax-token inspection.
+//!
+//! Quote and planning methods are read-only. Execution methods submit transactions and return only
+//! after receipt status validation.
+
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 
@@ -14,6 +19,7 @@ use crate::utils::{normalize_hex_or_base64, optional_non_zero};
 use crate::wallet::signer_from_private_key;
 
 impl FourMemeSdk {
+    /// Reads TokenManagerHelper3 token state used by quote and trading flows.
     pub async fn get_token_info(&self, token: Address) -> Result<TokenInfo> {
         let helper = TokenManagerHelper3::new(
             self.config.addresses.token_manager_helper3,
@@ -40,6 +46,9 @@ impl FourMemeSdk {
         })
     }
 
+    /// Quotes a buy by desired token amount or fixed quote-token/native funds.
+    ///
+    /// Pass exactly one non-zero input and set the unused value to `U256::ZERO`.
     pub async fn quote_buy(&self, token: Address, amount: U256, funds: U256) -> Result<BuyQuote> {
         validate_quote_inputs(amount, funds)?;
         let helper = TokenManagerHelper3::new(
@@ -63,6 +72,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Builds a quote-first buy plan without submitting approval or buy transactions.
     pub async fn plan_buy(&self, token: Address, mode: BuyMode) -> Result<BuyPlan> {
         mode.validate()?;
         let token_info = self.get_supported_trade_token_info(token).await?;
@@ -81,6 +91,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Quotes the funds and fee returned by selling a token amount.
     pub async fn quote_sell(&self, token: Address, amount: U256) -> Result<SellQuote> {
         validate_non_zero_amount("amount", amount)?;
         let helper = TokenManagerHelper3::new(
@@ -100,6 +111,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Builds a sell plan without submitting approval or sell transactions.
     pub async fn plan_sell(
         &self,
         token: Address,
@@ -129,6 +141,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Reads tax-token fee and distribution configuration.
     pub async fn get_tax_token_info(&self, token: Address) -> Result<TaxTokenInfo> {
         let contract = TaxToken::new(token, self.provider.clone());
         let fee_rate = contract
@@ -186,6 +199,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Submits reviewed `createToken` calldata and value to TokenManager2.
     pub async fn submit_create_token(
         &self,
         private_key: impl AsRef<str>,
@@ -207,6 +221,7 @@ impl FourMemeSdk {
         wait_for_confirmation(pending).await
     }
 
+    /// Submits a previously prepared token creation payload.
     pub async fn submit_prepared_create_token(
         &self,
         private_key: impl AsRef<str>,
@@ -227,6 +242,7 @@ impl FourMemeSdk {
         .await
     }
 
+    /// Compatibility buy entry point that plans, approves when required, executes, and confirms.
     pub async fn execute_buy(
         &self,
         private_key: impl AsRef<str>,
@@ -237,6 +253,7 @@ impl FourMemeSdk {
         Ok(result.execution.receipt)
     }
 
+    /// Runs a full buy workflow and returns both the plan and confirmed receipts.
     pub async fn execute_buy_with_plan(
         &self,
         private_key: impl AsRef<str>,
@@ -254,6 +271,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Submits the ERC-20 quote-token approval required by a buy plan, when any.
     pub async fn approve_buy(
         &self,
         private_key: impl AsRef<str>,
@@ -266,6 +284,7 @@ impl FourMemeSdk {
         Ok(Some(TradeApprovalReceipt { approval, receipt }))
     }
 
+    /// Executes an already reviewed buy plan without submitting its approval.
     pub async fn execute_buy_plan(
         &self,
         private_key: impl AsRef<str>,
@@ -308,6 +327,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Compatibility sell entry point that plans, approves, executes, and confirms.
     pub async fn execute_sell(
         &self,
         private_key: impl AsRef<str>,
@@ -321,6 +341,7 @@ impl FourMemeSdk {
         Ok(result.execution.receipt)
     }
 
+    /// Runs a full sell workflow and returns the plan plus confirmed approval/execution receipts.
     pub async fn execute_sell_with_plan(
         &self,
         private_key: impl AsRef<str>,
@@ -339,6 +360,7 @@ impl FourMemeSdk {
         })
     }
 
+    /// Submits the ERC-20 token approval required by a sell plan.
     pub async fn approve_sell(
         &self,
         private_key: impl AsRef<str>,
@@ -349,6 +371,7 @@ impl FourMemeSdk {
         Ok(TradeApprovalReceipt { approval, receipt })
     }
 
+    /// Executes an already reviewed sell plan without submitting its approval.
     pub async fn execute_sell_plan(
         &self,
         private_key: impl AsRef<str>,
@@ -410,6 +433,7 @@ impl FourMemeSdk {
         wait_for_confirmation(pending).await
     }
 
+    /// Sends native BNB or an ERC-20 transfer and validates the receipt status.
     pub async fn send_asset(
         &self,
         private_key: impl AsRef<str>,

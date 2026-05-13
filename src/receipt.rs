@@ -1,3 +1,5 @@
+//! Transaction receipt confirmation and status validation helpers.
+
 use alloy::network::Ethereum;
 use alloy::providers::{PendingTransactionBuilder, PendingTransactionError};
 use alloy::rpc::types::TransactionReceipt;

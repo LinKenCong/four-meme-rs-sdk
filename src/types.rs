@@ -1,3 +1,5 @@
+//! Request and response models used by REST, trading, events, and EIP-8004 helpers.
+
 use std::collections::BTreeMap;
 
 use alloy::primitives::{Address, B256, U256};

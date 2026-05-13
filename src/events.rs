@@ -1,3 +1,5 @@
+//! TokenManager2 event query helpers for monitoring and deterministic backfills.
+
 use alloy::providers::Provider;
 use alloy::rpc::types::eth::{Filter, Log};
 use alloy::sol_types::SolEvent;
@@ -13,6 +15,7 @@ use crate::types::{
 const DEFAULT_EVENT_BLOCK_CHUNK_SIZE: u64 = 2_000;
 
 impl FourMemeSdk {
+    /// Fetches TokenManager2 events from the most recent `block_count` blocks.
     pub async fn recent_events(&self, block_count: u64) -> Result<Vec<TokenEvent>> {
         let latest = self
             .provider
@@ -23,11 +26,13 @@ impl FourMemeSdk {
         self.events(from, Some(latest)).await
     }
 
+    /// Fetches TokenManager2 events over a deterministic block range.
     pub async fn events(&self, from_block: u64, to_block: Option<u64>) -> Result<Vec<TokenEvent>> {
         self.events_with_chunk_size(from_block, to_block, DEFAULT_EVENT_BLOCK_CHUNK_SIZE)
             .await
     }
 
+    /// Fetches events with an explicit maximum block range per provider request.
     pub async fn events_with_chunk_size(
         &self,
         from_block: u64,

@@ -1,3 +1,5 @@
+//! SDK error taxonomy and secret redaction helpers.
+
 use alloy::primitives::{Address, B256};
 use reqwest::StatusCode;
 use thiserror::Error;
