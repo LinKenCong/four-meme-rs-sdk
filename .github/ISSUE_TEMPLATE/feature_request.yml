@@ -1,0 +1,64 @@
+name: Feature request
+description: Propose an SDK improvement or new capability
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Do not include private keys, access tokens, seed phrases, or funded wallet details.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to build, and what gap does this feature solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the API, behavior, or documentation change you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: SDK area
+      options:
+        - Public REST API
+        - Token creation
+        - Trading
+        - Transfers
+        - Events
+        - EIP-8004
+        - Tax tokens
+        - Configuration
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: mainnet-safety
+    attributes:
+      label: Mainnet or transaction impact
+      description: If this feature can write to BSC mainnet, explain required safeguards, fork coverage, and user confirmations.
+      placeholder: "No mainnet-writing behavior expected."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or designs have you considered?
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have not included real secrets, access tokens, seed phrases, or private keys.
+          required: true
+        - label: I have described any transaction or BSC mainnet safety implications.
+          required: true

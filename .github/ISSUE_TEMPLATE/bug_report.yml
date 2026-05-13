@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible problem in the SDK
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include private keys, access tokens, seed phrases, or funded wallet details.
+        For security vulnerabilities, stop here and follow SECURITY.md instead of opening a public issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the smallest code sample or steps needed to reproduce the issue. Use placeholders for secrets.
+      placeholder: |
+        1. Configure SDK with <rpc-url-placeholder>
+        2. Call ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SDK version or commit
+      placeholder: "0.1.0 or <commit-sha>"
+    validations:
+      required: true
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust version
+      placeholder: "rustc --version"
+    validations:
+      required: false
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network context
+      options:
+        - Read-only API call
+        - Local fork
+        - Testnet
+        - BSC mainnet
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: Redact secrets, account identifiers, and private RPC URLs before pasting output.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checklist
+      options:
+        - label: I have removed or replaced private keys, tokens, seed phrases, private RPC URLs, and funded wallet details.
+          required: true
+        - label: This is not a security vulnerability report.
+          required: true
