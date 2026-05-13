@@ -6,8 +6,9 @@ use crate::contracts::{Erc20, TaxToken, TokenManager2, TokenManagerHelper3};
 use crate::error::{Result, SdkError};
 use crate::receipt::wait_for_confirmation;
 use crate::types::{
-    Asset, BuyMode, BuyQuote, ConfirmedReceipt, CreateTokenApiOutput, SellQuote, TaxTokenInfo,
-    TokenInfo,
+    Asset, BuyExecutionPlan, BuyExecutionResult, BuyMode, BuyPlan, BuyQuote, ConfirmedReceipt,
+    CreateTokenApiOutput, SellExecutionPlan, SellExecutionResult, SellPlan, SellQuote,
+    TaxTokenInfo, TokenInfo, TradeApproval, TradeApprovalReceipt, TradeExecutionReceipt,
 };
 use crate::utils::{normalize_hex_or_base64, optional_non_zero};
 use crate::wallet::signer_from_private_key;
@@ -40,6 +41,7 @@ impl FourMemeSdk {
     }
 
     pub async fn quote_buy(&self, token: Address, amount: U256, funds: U256) -> Result<BuyQuote> {
+        validate_quote_inputs(amount, funds)?;
         let helper = TokenManagerHelper3::new(
             self.config.addresses.token_manager_helper3,
             self.provider.clone(),
@@ -61,7 +63,26 @@ impl FourMemeSdk {
         })
     }
 
+    pub async fn plan_buy(&self, token: Address, mode: BuyMode) -> Result<BuyPlan> {
+        mode.validate()?;
+        let token_info = self.get_supported_trade_token_info(token).await?;
+        let (amount, funds) = mode.quote_inputs();
+        let quote = self.quote_buy(token, amount, funds).await?;
+        ensure_quote_matches_manager(quote.token_manager, token_info.token_manager)?;
+        let approval = buy_approval(&quote, token_info.token_manager);
+        let execution = buy_execution_plan(token, mode, quote.amount_msg_value);
+        Ok(BuyPlan {
+            token,
+            token_manager: token_info.token_manager,
+            mode,
+            quote,
+            approval,
+            execution,
+        })
+    }
+
     pub async fn quote_sell(&self, token: Address, amount: U256) -> Result<SellQuote> {
+        validate_non_zero_amount("amount", amount)?;
         let helper = TokenManagerHelper3::new(
             self.config.addresses.token_manager_helper3,
             self.provider.clone(),
@@ -76,6 +97,35 @@ impl FourMemeSdk {
             quote: optional_non_zero(result.quote),
             funds: result.funds,
             fee: result.fee,
+        })
+    }
+
+    pub async fn plan_sell(
+        &self,
+        token: Address,
+        amount: U256,
+        min_funds: Option<U256>,
+    ) -> Result<SellPlan> {
+        validate_non_zero_amount("amount", amount)?;
+        validate_optional_non_zero_amount("min_funds", min_funds)?;
+        let token_info = self.get_supported_trade_token_info(token).await?;
+        let quote = self.quote_sell(token, amount).await?;
+        ensure_quote_matches_manager(quote.token_manager, token_info.token_manager)?;
+        Ok(SellPlan {
+            token,
+            token_manager: token_info.token_manager,
+            quote,
+            approval: TradeApproval {
+                token,
+                spender: token_info.token_manager,
+                amount,
+            },
+            execution: SellExecutionPlan {
+                token,
+                value: U256::ZERO,
+                amount,
+                min_funds,
+            },
         })
     }
 
@@ -183,6 +233,154 @@ impl FourMemeSdk {
         token: Address,
         mode: BuyMode,
     ) -> Result<ConfirmedReceipt> {
+        let result = self.execute_buy_with_plan(private_key, token, mode).await?;
+        Ok(result.execution.receipt)
+    }
+
+    pub async fn execute_buy_with_plan(
+        &self,
+        private_key: impl AsRef<str>,
+        token: Address,
+        mode: BuyMode,
+    ) -> Result<BuyExecutionResult> {
+        let private_key = private_key.as_ref();
+        let plan = self.plan_buy(token, mode).await?;
+        let approval = self.approve_buy(private_key, &plan).await?;
+        let execution = self.execute_buy_plan(private_key, &plan).await?;
+        Ok(BuyExecutionResult {
+            plan,
+            approval,
+            execution,
+        })
+    }
+
+    pub async fn approve_buy(
+        &self,
+        private_key: impl AsRef<str>,
+        plan: &BuyPlan,
+    ) -> Result<Option<TradeApprovalReceipt>> {
+        let Some(approval) = plan.approval else {
+            return Ok(None);
+        };
+        let receipt = self.submit_approval(private_key, approval).await?;
+        Ok(Some(TradeApprovalReceipt { approval, receipt }))
+    }
+
+    pub async fn execute_buy_plan(
+        &self,
+        private_key: impl AsRef<str>,
+        plan: &BuyPlan,
+    ) -> Result<TradeExecutionReceipt> {
+        let signer = signer_from_private_key(private_key)?;
+        let provider = self.signer_provider(signer)?;
+        let manager = TokenManager2::new(plan.token_manager, provider);
+        let execution = plan.execution;
+        let pending = match execution {
+            BuyExecutionPlan::FixedAmount {
+                token,
+                value,
+                amount,
+                max_funds,
+            } => manager
+                .buyToken(token, amount, max_funds)
+                .value(value)
+                .send()
+                .await
+                .map_err(contract_error)?,
+            BuyExecutionPlan::FixedFunds {
+                token,
+                value,
+                funds,
+                min_amount,
+            } => manager
+                .buyTokenAMAP(token, funds, min_amount)
+                .value(value)
+                .send()
+                .await
+                .map_err(contract_error)?,
+        };
+        let receipt = wait_for_confirmation(pending).await?;
+        Ok(TradeExecutionReceipt {
+            token: plan.token,
+            token_manager: plan.token_manager,
+            value: execution.value(),
+            receipt,
+        })
+    }
+
+    pub async fn execute_sell(
+        &self,
+        private_key: impl AsRef<str>,
+        token: Address,
+        amount: U256,
+        min_funds: Option<U256>,
+    ) -> Result<ConfirmedReceipt> {
+        let result = self
+            .execute_sell_with_plan(private_key, token, amount, min_funds)
+            .await?;
+        Ok(result.execution.receipt)
+    }
+
+    pub async fn execute_sell_with_plan(
+        &self,
+        private_key: impl AsRef<str>,
+        token: Address,
+        amount: U256,
+        min_funds: Option<U256>,
+    ) -> Result<SellExecutionResult> {
+        let private_key = private_key.as_ref();
+        let plan = self.plan_sell(token, amount, min_funds).await?;
+        let approval = self.approve_sell(private_key, &plan).await?;
+        let execution = self.execute_sell_plan(private_key, &plan).await?;
+        Ok(SellExecutionResult {
+            plan,
+            approval,
+            execution,
+        })
+    }
+
+    pub async fn approve_sell(
+        &self,
+        private_key: impl AsRef<str>,
+        plan: &SellPlan,
+    ) -> Result<TradeApprovalReceipt> {
+        let approval = plan.approval;
+        let receipt = self.submit_approval(private_key, approval).await?;
+        Ok(TradeApprovalReceipt { approval, receipt })
+    }
+
+    pub async fn execute_sell_plan(
+        &self,
+        private_key: impl AsRef<str>,
+        plan: &SellPlan,
+    ) -> Result<TradeExecutionReceipt> {
+        let signer = signer_from_private_key(private_key)?;
+        let provider = self.signer_provider(signer)?;
+        let manager = TokenManager2::new(plan.token_manager, provider);
+        let execution = plan.execution;
+        let pending = if let Some(min_funds) = execution.min_funds {
+            manager
+                .sellToken_1(U256::ZERO, execution.token, execution.amount, min_funds)
+                .send()
+                .await
+                .map_err(contract_error)?
+        } else {
+            manager
+                .sellToken_0(execution.token, execution.amount)
+                .send()
+                .await
+                .map_err(contract_error)?
+        };
+        let receipt = wait_for_confirmation(pending).await?;
+        Ok(TradeExecutionReceipt {
+            token: plan.token,
+            token_manager: plan.token_manager,
+            value: execution.value,
+            receipt,
+        })
+    }
+
+    async fn get_supported_trade_token_info(&self, token: Address) -> Result<TokenInfo> {
         let token_info = self.get_token_info(token).await?;
         if token_info.version != 2 {
             return Err(SdkError::validation(
@@ -193,77 +391,22 @@ impl FourMemeSdk {
                 ),
             ));
         }
-        let (amount, funds) = match mode {
-            BuyMode::FixedAmount { amount, .. } => (amount, U256::ZERO),
-            BuyMode::FixedFunds { funds, .. } => (U256::ZERO, funds),
-        };
-        let quote = self.quote_buy(token, amount, funds).await?;
-        let signer = signer_from_private_key(private_key)?;
-        let provider = self.signer_provider(signer)?;
-        if let Some(quote_token) = quote.quote.filter(|_| quote.amount_approval > U256::ZERO) {
-            let erc20 = Erc20::new(quote_token, provider.clone());
-            let approval = erc20
-                .approve(token_info.token_manager, quote.amount_approval)
-                .send()
-                .await
-                .map_err(contract_error)?;
-            wait_for_confirmation(approval).await?;
-        }
-        let manager = TokenManager2::new(token_info.token_manager, provider);
-        let pending = match mode {
-            BuyMode::FixedAmount { amount, max_funds } => manager
-                .buyToken(token, amount, max_funds)
-                .value(quote.amount_msg_value)
-                .send()
-                .await
-                .map_err(contract_error)?,
-            BuyMode::FixedFunds { funds, min_amount } => manager
-                .buyTokenAMAP(token, funds, min_amount)
-                .value(quote.amount_msg_value)
-                .send()
-                .await
-                .map_err(contract_error)?,
-        };
-        wait_for_confirmation(pending).await
+        Ok(token_info)
     }
 
-    pub async fn execute_sell(
+    async fn submit_approval(
         &self,
         private_key: impl AsRef<str>,
-        token: Address,
-        amount: U256,
-        min_funds: Option<U256>,
+        approval: TradeApproval,
     ) -> Result<ConfirmedReceipt> {
-        if amount == U256::ZERO {
-            return Err(SdkError::validation(
-                "amount",
-                format!("invalid amount `{amount}`"),
-            ));
-        }
-        let token_info = self.get_token_info(token).await?;
         let signer = signer_from_private_key(private_key)?;
         let provider = self.signer_provider(signer)?;
-        let token_contract = Erc20::new(token, provider.clone());
-        let approval = token_contract
-            .approve(token_info.token_manager, amount)
+        let erc20 = Erc20::new(approval.token, provider);
+        let pending = erc20
+            .approve(approval.spender, approval.amount)
             .send()
             .await
             .map_err(contract_error)?;
-        wait_for_confirmation(approval).await?;
-        let manager = TokenManager2::new(token_info.token_manager, provider);
-        let pending = if let Some(min_funds) = min_funds {
-            manager
-                .sellToken_1(U256::ZERO, token, amount, min_funds)
-                .send()
-                .await
-                .map_err(contract_error)?
-        } else {
-            manager
-                .sellToken_0(token, amount)
-                .send()
-                .await
-                .map_err(contract_error)?
-        };
         wait_for_confirmation(pending).await
     }
 
@@ -303,6 +446,72 @@ impl FourMemeSdk {
                 wait_for_confirmation(pending).await
             }
         }
+    }
+}
+
+fn validate_quote_inputs(amount: U256, funds: U256) -> Result<()> {
+    match (amount > U256::ZERO, funds > U256::ZERO) {
+        (true, false) | (false, true) => Ok(()),
+        (false, false) => Err(SdkError::validation(
+            "amount_or_funds",
+            "one input must be greater than zero",
+        )),
+        (true, true) => Err(SdkError::validation(
+            "amount_or_funds",
+            "only one input can be greater than zero",
+        )),
+    }
+}
+
+fn validate_non_zero_amount(field: &'static str, amount: U256) -> Result<()> {
+    if amount == U256::ZERO {
+        return Err(SdkError::validation(field, "must be greater than zero"));
+    }
+    Ok(())
+}
+
+fn validate_optional_non_zero_amount(field: &'static str, amount: Option<U256>) -> Result<()> {
+    if amount == Some(U256::ZERO) {
+        return Err(SdkError::validation(field, "must be greater than zero"));
+    }
+    Ok(())
+}
+
+fn ensure_quote_matches_manager(quoted: Address, expected: Address) -> Result<()> {
+    if quoted != expected {
+        return Err(SdkError::validation(
+            "token_manager",
+            "quote returned a different token manager",
+        ));
+    }
+    Ok(())
+}
+
+fn buy_approval(quote: &BuyQuote, spender: Address) -> Option<TradeApproval> {
+    quote
+        .quote
+        .filter(|_| quote.amount_approval > U256::ZERO)
+        .map(|token| TradeApproval {
+            token,
+            spender,
+            amount: quote.amount_approval,
+        })
+}
+
+fn buy_execution_plan(token: Address, mode: BuyMode, value: U256) -> BuyExecutionPlan {
+    match mode {
+        BuyMode::FixedAmount { amount, max_funds } => BuyExecutionPlan::FixedAmount {
+            token,
+            value,
+            amount,
+            max_funds,
+        },
+        BuyMode::FixedFunds { funds, min_amount } => BuyExecutionPlan::FixedFunds {
+            token,
+            value,
+            funds,
+            min_amount,
+        },
     }
 }
 

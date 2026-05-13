@@ -977,7 +977,7 @@ pub struct TokenInfo {
     pub liquidity_added: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuyQuote {
     pub token_manager: Address,
@@ -990,7 +990,7 @@ pub struct BuyQuote {
     pub amount_funds: U256,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SellQuote {
     pub token_manager: Address,
@@ -1014,10 +1014,141 @@ pub struct TaxTokenInfo {
     pub founder: Option<Address>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum BuyMode {
     FixedAmount { amount: U256, max_funds: U256 },
     FixedFunds { funds: U256, min_amount: U256 },
+}
+
+impl BuyMode {
+    pub fn validate(self) -> crate::Result<()> {
+        match self {
+            Self::FixedAmount { amount, max_funds } => {
+                validate_trade_amount("amount", amount)?;
+                validate_trade_amount("max_funds", max_funds)
+            }
+            Self::FixedFunds { funds, min_amount } => {
+                validate_trade_amount("funds", funds)?;
+                validate_trade_amount("min_amount", min_amount)
+            }
+        }
+    }
+
+    pub fn quote_inputs(self) -> (U256, U256) {
+        match self {
+            Self::FixedAmount { amount, .. } => (amount, U256::ZERO),
+            Self::FixedFunds { funds, .. } => (U256::ZERO, funds),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeApproval {
+    pub token: Address,
+    pub spender: Address,
+    pub amount: U256,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BuyExecutionPlan {
+    FixedAmount {
+        token: Address,
+        value: U256,
+        amount: U256,
+        max_funds: U256,
+    },
+    FixedFunds {
+        token: Address,
+        value: U256,
+        funds: U256,
+        min_amount: U256,
+    },
+}
+
+impl BuyExecutionPlan {
+    pub fn value(self) -> U256 {
+        match self {
+            Self::FixedAmount { value, .. } | Self::FixedFunds { value, .. } => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuyPlan {
+    pub token: Address,
+    pub token_manager: Address,
+    pub mode: BuyMode,
+    pub quote: BuyQuote,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<TradeApproval>,
+    pub execution: BuyExecutionPlan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SellExecutionPlan {
+    pub token: Address,
+    pub value: U256,
+    pub amount: U256,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_funds: Option<U256>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SellPlan {
+    pub token: Address,
+    pub token_manager: Address,
+    pub quote: SellQuote,
+    pub approval: TradeApproval,
+    pub execution: SellExecutionPlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeApprovalReceipt {
+    pub approval: TradeApproval,
+    pub receipt: ConfirmedReceipt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeExecutionReceipt {
+    pub token: Address,
+    pub token_manager: Address,
+    pub value: U256,
+    pub receipt: ConfirmedReceipt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuyExecutionResult {
+    pub plan: BuyPlan,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<TradeApprovalReceipt>,
+    pub execution: TradeExecutionReceipt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SellExecutionResult {
+    pub plan: SellPlan,
+    pub approval: TradeApprovalReceipt,
+    pub execution: TradeExecutionReceipt,
+}
+
+fn validate_trade_amount(field: &'static str, amount: U256) -> crate::Result<()> {
+    if amount == U256::ZERO {
+        return Err(crate::SdkError::validation(
+            field,
+            "must be greater than zero",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1057,7 +1188,7 @@ impl AgentMetadata {
 
 /// Result of an EIP-8004 agent registration transaction.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmedReceipt {
     pub tx_hash: B256,
