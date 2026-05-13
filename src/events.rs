@@ -1,11 +1,16 @@
 use alloy::providers::Provider;
-use alloy::rpc::types::eth::Filter;
+use alloy::rpc::types::eth::{Filter, Log};
 use alloy::sol_types::SolEvent;
-use serde_json::{Value, json};
 
 use crate::client::FourMemeSdk;
+use crate::contracts::TokenManager2;
 use crate::error::{Result, SdkError};
-use crate::types::TokenEvent;
+use crate::types::{
+    EventBlockRange, LiquidityAddedEvent, RawTokenManagerEvent, TokenCreateEvent, TokenEvent,
+    TokenEventMetadata, TokenManagerEvent, TokenPurchaseEvent, TokenSaleEvent,
+};
+
+const DEFAULT_EVENT_BLOCK_CHUNK_SIZE: u64 = 2_000;
 
 impl FourMemeSdk {
     pub async fn recent_events(&self, block_count: u64) -> Result<Vec<TokenEvent>> {
@@ -19,57 +24,82 @@ impl FourMemeSdk {
     }
 
     pub async fn events(&self, from_block: u64, to_block: Option<u64>) -> Result<Vec<TokenEvent>> {
-        let mut filter = Filter::new()
+        self.events_with_chunk_size(from_block, to_block, DEFAULT_EVENT_BLOCK_CHUNK_SIZE)
+            .await
+    }
+
+    pub async fn events_with_chunk_size(
+        &self,
+        from_block: u64,
+        to_block: Option<u64>,
+        chunk_size: u64,
+    ) -> Result<Vec<TokenEvent>> {
+        let to_block = match to_block {
+            Some(to_block) => to_block,
+            None => self
+                .provider
+                .get_block_number()
+                .await
+                .map_err(|error| SdkError::Contract(error.to_string()))?,
+        };
+        let ranges = EventBlockRange::chunked(from_block, to_block, chunk_size)?;
+        let mut events = Vec::new();
+
+        for range in ranges {
+            let filter = self.token_manager_event_filter(range.from_block, range.to_block);
+            let logs = self
+                .provider
+                .get_logs(&filter)
+                .await
+                .map_err(|error| SdkError::Contract(error.to_string()))?;
+            events.extend(logs.into_iter().map(decode_token_manager_event));
+        }
+
+        Ok(events)
+    }
+
+    fn token_manager_event_filter(&self, from_block: u64, to_block: u64) -> Filter {
+        Filter::new()
             .address(self.config.addresses.token_manager2)
             .from_block(from_block)
-            .event_signature(vec![
-                crate::contracts::TokenManager2::TokenCreate::SIGNATURE_HASH,
-                crate::contracts::TokenManager2::TokenPurchase::SIGNATURE_HASH,
-                crate::contracts::TokenManager2::TokenSale::SIGNATURE_HASH,
-                crate::contracts::TokenManager2::LiquidityAdded::SIGNATURE_HASH,
-            ]);
-        if let Some(to_block) = to_block {
-            filter = filter.to_block(to_block);
-        }
-        let logs = self
-            .provider
-            .get_logs(&filter)
-            .await
-            .map_err(|error| SdkError::Contract(error.to_string()))?;
-        Ok(logs
-            .into_iter()
-            .map(|log| {
-                let topic0 = log.topic0().copied();
-                let event_name = match topic0 {
-                    Some(crate::contracts::TokenManager2::TokenCreate::SIGNATURE_HASH) => {
-                        "TokenCreate"
-                    }
-                    Some(crate::contracts::TokenManager2::TokenPurchase::SIGNATURE_HASH) => {
-                        "TokenPurchase"
-                    }
-                    Some(crate::contracts::TokenManager2::TokenSale::SIGNATURE_HASH) => "TokenSale",
-                    Some(crate::contracts::TokenManager2::LiquidityAdded::SIGNATURE_HASH) => {
-                        "LiquidityAdded"
-                    }
-                    _ => "Unknown",
-                };
-                TokenEvent {
-                    event_name: event_name.to_string(),
-                    block_number: log.block_number.unwrap_or_default(),
-                    transaction_hash: log.transaction_hash.unwrap_or_default(),
-                    args: serde_json::to_value(&log).unwrap_or(Value::Null),
-                }
-            })
-            .collect())
+            .to_block(to_block)
+            .event_signature(TokenManagerEvent::signature_hashes())
     }
 }
 
-#[allow(dead_code)]
-fn event_placeholder(hash: alloy::primitives::B256) -> TokenEvent {
-    TokenEvent {
-        event_name: "TokenCreate".to_string(),
-        block_number: 0,
-        transaction_hash: hash,
-        args: json!({}),
+fn decode_token_manager_event(log: Log) -> TokenEvent {
+    let metadata = TokenEventMetadata::from_log(&log);
+    let kind = match log.topic0().copied() {
+        Some(TokenManager2::TokenCreate::SIGNATURE_HASH) => {
+            decode_known_event::<TokenManager2::TokenCreate, _>(&log, TokenCreateEvent::from)
+        }
+        Some(TokenManager2::TokenPurchase::SIGNATURE_HASH) => {
+            decode_known_event::<TokenManager2::TokenPurchase, _>(&log, TokenPurchaseEvent::from)
+        }
+        Some(TokenManager2::TokenSale::SIGNATURE_HASH) => {
+            decode_known_event::<TokenManager2::TokenSale, _>(&log, TokenSaleEvent::from)
+        }
+        Some(TokenManager2::LiquidityAdded::SIGNATURE_HASH) => {
+            decode_known_event::<TokenManager2::LiquidityAdded, _>(&log, LiquidityAddedEvent::from)
+        }
+        topic0 => TokenManagerEvent::Raw(RawTokenManagerEvent::from_log(&log, topic0)),
+    };
+
+    TokenEvent { metadata, kind }
+}
+
+fn decode_known_event<TEvent, TTyped>(
+    log: &Log,
+    build_typed: impl FnOnce(TEvent) -> TTyped,
+) -> TokenManagerEvent
+where
+    TEvent: SolEvent,
+    TTyped: Into<TokenManagerEvent>,
+{
+    match log.log_decode::<TEvent>() {
+        Ok(decoded) => build_typed(decoded.inner.data).into(),
+        Err(_) => {
+            TokenManagerEvent::Raw(RawTokenManagerEvent::from_log(log, log.topic0().copied()))
+        }
     }
 }

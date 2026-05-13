@@ -25,6 +25,10 @@ pub enum SdkError {
     InvalidTaxFeeRate(u16),
     #[error("no raised token config is available")]
     MissingRaisedToken,
+    #[error("invalid block range: from_block {from_block} is greater than to_block {to_block}")]
+    InvalidBlockRange { from_block: u64, to_block: u64 },
+    #[error("event block chunk size must be greater than 0, got {0}")]
+    InvalidBlockChunkSize(u64),
     #[error("contract call failed: {0}")]
     Contract(String),
     #[error("transaction failed: {0}")]

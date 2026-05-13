@@ -334,8 +334,310 @@ pub struct AgentRegistration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenEvent {
-    pub event_name: String,
-    pub block_number: u64,
-    pub transaction_hash: B256,
-    pub args: Value,
+    pub metadata: TokenEventMetadata,
+    pub kind: TokenManagerEvent,
+}
+
+impl TokenEvent {
+    pub fn event_name(&self) -> &'static str {
+        self.kind.event_name()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenEventMetadata {
+    pub address: Address,
+    pub block_hash: Option<B256>,
+    pub block_number: Option<u64>,
+    pub block_timestamp: Option<u64>,
+    pub transaction_hash: Option<B256>,
+    pub transaction_index: Option<u64>,
+    pub log_index: Option<u64>,
+    pub is_removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "eventName", content = "args")]
+pub enum TokenManagerEvent {
+    TokenCreate(TokenCreateEvent),
+    TokenPurchase(TokenPurchaseEvent),
+    TokenSale(TokenSaleEvent),
+    LiquidityAdded(LiquidityAddedEvent),
+    Raw(RawTokenManagerEvent),
+}
+
+impl TokenManagerEvent {
+    pub fn event_name(&self) -> &'static str {
+        match self {
+            Self::TokenCreate(_) => "TokenCreate",
+            Self::TokenPurchase(_) => "TokenPurchase",
+            Self::TokenSale(_) => "TokenSale",
+            Self::LiquidityAdded(_) => "LiquidityAdded",
+            Self::Raw(_) => "Raw",
+        }
+    }
+
+    pub fn signature_hashes() -> Vec<B256> {
+        use alloy::sol_types::SolEvent;
+
+        vec![
+            crate::contracts::TokenManager2::TokenCreate::SIGNATURE_HASH,
+            crate::contracts::TokenManager2::TokenPurchase::SIGNATURE_HASH,
+            crate::contracts::TokenManager2::TokenSale::SIGNATURE_HASH,
+            crate::contracts::TokenManager2::LiquidityAdded::SIGNATURE_HASH,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenCreateEvent {
+    pub creator: Address,
+    pub token: Address,
+    pub request_id: U256,
+    pub name: String,
+    pub symbol: String,
+    pub total_supply: U256,
+    pub launch_time: U256,
+    pub launch_fee: U256,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenPurchaseEvent {
+    pub token: Address,
+    pub account: Address,
+    pub price: U256,
+    pub amount: U256,
+    pub cost: U256,
+    pub fee: U256,
+    pub offers: U256,
+    pub funds: U256,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenSaleEvent {
+    pub token: Address,
+    pub account: Address,
+    pub price: U256,
+    pub amount: U256,
+    pub cost: U256,
+    pub fee: U256,
+    pub offers: U256,
+    pub funds: U256,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiquidityAddedEvent {
+    pub base: Address,
+    pub offers: U256,
+    pub quote: Address,
+    pub funds: U256,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawTokenManagerEvent {
+    pub signature: Option<B256>,
+    pub address: Address,
+    pub topics: Vec<B256>,
+    pub data: alloy::primitives::Bytes,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventBlockRange {
+    pub from_block: u64,
+    pub to_block: u64,
+}
+
+impl EventBlockRange {
+    pub fn chunked(
+        from_block: u64,
+        to_block: u64,
+        chunk_size: u64,
+    ) -> crate::Result<Vec<EventBlockRange>> {
+        if from_block > to_block {
+            return Err(crate::SdkError::InvalidBlockRange {
+                from_block,
+                to_block,
+            });
+        }
+        if chunk_size == 0 {
+            return Err(crate::SdkError::InvalidBlockChunkSize(chunk_size));
+        }
+
+        let mut ranges = Vec::new();
+        let mut current_from = from_block;
+        while current_from <= to_block {
+            let current_to = current_from.saturating_add(chunk_size - 1).min(to_block);
+            ranges.push(EventBlockRange {
+                from_block: current_from,
+                to_block: current_to,
+            });
+            if current_to == u64::MAX {
+                break;
+            }
+            current_from = current_to + 1;
+        }
+
+        Ok(ranges)
+    }
+}
+
+impl From<crate::contracts::TokenManager2::TokenCreate> for TokenCreateEvent {
+    fn from(event: crate::contracts::TokenManager2::TokenCreate) -> Self {
+        Self {
+            creator: event.creator,
+            token: event.token,
+            request_id: event.requestId,
+            name: event.name,
+            symbol: event.symbol,
+            total_supply: event.totalSupply,
+            launch_time: event.launchTime,
+            launch_fee: event.launchFee,
+        }
+    }
+}
+
+impl From<crate::contracts::TokenManager2::TokenPurchase> for TokenPurchaseEvent {
+    fn from(event: crate::contracts::TokenManager2::TokenPurchase) -> Self {
+        Self {
+            token: event.token,
+            account: event.account,
+            price: event.price,
+            amount: event.amount,
+            cost: event.cost,
+            fee: event.fee,
+            offers: event.offers,
+            funds: event.funds,
+        }
+    }
+}
+
+impl From<crate::contracts::TokenManager2::TokenSale> for TokenSaleEvent {
+    fn from(event: crate::contracts::TokenManager2::TokenSale) -> Self {
+        Self {
+            token: event.token,
+            account: event.account,
+            price: event.price,
+            amount: event.amount,
+            cost: event.cost,
+            fee: event.fee,
+            offers: event.offers,
+            funds: event.funds,
+        }
+    }
+}
+
+impl From<crate::contracts::TokenManager2::LiquidityAdded> for LiquidityAddedEvent {
+    fn from(event: crate::contracts::TokenManager2::LiquidityAdded) -> Self {
+        Self {
+            base: event.base,
+            offers: event.offers,
+            quote: event.quote,
+            funds: event.funds,
+        }
+    }
+}
+
+impl From<TokenCreateEvent> for TokenManagerEvent {
+    fn from(event: TokenCreateEvent) -> Self {
+        Self::TokenCreate(event)
+    }
+}
+
+impl From<TokenPurchaseEvent> for TokenManagerEvent {
+    fn from(event: TokenPurchaseEvent) -> Self {
+        Self::TokenPurchase(event)
+    }
+}
+
+impl From<TokenSaleEvent> for TokenManagerEvent {
+    fn from(event: TokenSaleEvent) -> Self {
+        Self::TokenSale(event)
+    }
+}
+
+impl From<LiquidityAddedEvent> for TokenManagerEvent {
+    fn from(event: LiquidityAddedEvent) -> Self {
+        Self::LiquidityAdded(event)
+    }
+}
+
+impl TokenEventMetadata {
+    pub(crate) fn from_log(log: &alloy::rpc::types::eth::Log) -> Self {
+        Self {
+            address: log.address(),
+            block_hash: log.block_hash,
+            block_number: log.block_number,
+            block_timestamp: log.block_timestamp,
+            transaction_hash: log.transaction_hash,
+            transaction_index: log.transaction_index,
+            log_index: log.log_index,
+            is_removed: log.removed,
+        }
+    }
+}
+
+impl RawTokenManagerEvent {
+    pub(crate) fn from_log(log: &alloy::rpc::types::eth::Log, signature: Option<B256>) -> Self {
+        Self {
+            signature,
+            address: log.address(),
+            topics: log.topics().to_vec(),
+            data: log.data().data.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EventBlockRange;
+
+    #[test]
+    fn chunks_inclusive_block_ranges() {
+        let ranges = EventBlockRange::chunked(10, 15, 2).expect("valid range");
+
+        assert_eq!(
+            ranges,
+            vec![
+                EventBlockRange {
+                    from_block: 10,
+                    to_block: 11,
+                },
+                EventBlockRange {
+                    from_block: 12,
+                    to_block: 13,
+                },
+                EventBlockRange {
+                    from_block: 14,
+                    to_block: 15,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_block_range() {
+        let error = EventBlockRange::chunked(20, 10, 10).expect_err("invalid range");
+
+        assert!(matches!(
+            error,
+            crate::SdkError::InvalidBlockRange {
+                from_block: 20,
+                to_block: 10,
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_chunk_size() {
+        let error = EventBlockRange::chunked(10, 20, 0).expect_err("invalid chunk size");
+
+        assert!(matches!(error, crate::SdkError::InvalidBlockChunkSize(0)));
+    }
 }
