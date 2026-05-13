@@ -1,8 +1,8 @@
 [package]
 name = "four_meme_sdk"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.91"
 license = "MIT"
 description = "Programmatic Rust SDK for Four.meme API and BSC contracts"
 homepage = "https://four.meme"
@@ -13,7 +13,7 @@ keywords = ["four-meme", "bsc", "defi", "sdk", "alloy"]
 categories = ["api-bindings", "cryptography::cryptocurrencies", "web-programming::http-client"]
 
 [dependencies]
-alloy = { version = "1.0", features = ["contract", "network", "providers", "provider-http", "rpc", "rpc-types", "signers", "signer-local", "sol-types", "transports"] }
+alloy = { version = "2", features = ["contract", "network", "providers", "provider-http", "rpc", "rpc-types", "signers", "signer-local", "sol-types", "transports"] }
 base64 = "0.22"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
@@ -24,6 +24,6 @@ url = "2"
 tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
-alloy = { version = "1.0", features = ["node-bindings"] }
+alloy = { version = "2", features = ["node-bindings"] }
 httpmock = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "io-util"] }

@@ -8,6 +8,7 @@ Use it to build bots, indexers, dashboards, and local-fork test harnesses that n
 
 - Pre-1.0 SDK. Public APIs are usable, but minor-version releases may still refine names or response models.
 - Source installation from GitHub is the current recommended path until the crate is published to crates.io.
+- Requires Rust 1.91 or newer and Alloy 2.x.
 - Write helpers can spend real BNB/tokens. Use local forks and explicit operator confirmation before any mainnet transaction.
 
 ## What It Covers
@@ -41,7 +42,7 @@ Use the Git dependency until the crate is published to crates.io. For production
 [dependencies]
 four_meme_sdk = { git = "https://github.com/LinKenCong/four-meme-rs-sdk", branch = "main" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-alloy = { version = "1.0", features = ["primitives"] }
+alloy = { version = "2", features = ["primitives"] }
 ```
 
 Pinned production-style dependency:
@@ -50,7 +51,7 @@ Pinned production-style dependency:
 [dependencies]
 four_meme_sdk = { git = "https://github.com/LinKenCong/four-meme-rs-sdk", rev = "<commit-sha>" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-alloy = { version = "1.0", features = ["primitives"] }
+alloy = { version = "2", features = ["primitives"] }
 ```
 
 If your environment requires SSH access to GitHub, use Cargo's SSH URL form:
@@ -67,7 +68,7 @@ Use a path dependency when developing this SDK and a downstream application toge
 [dependencies]
 four_meme_sdk = { path = "../four-meme-rs-sdk" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-alloy = { version = "1.0", features = ["primitives"] }
+alloy = { version = "2", features = ["primitives"] }
 ```
 
 ### From crates.io
@@ -76,9 +77,9 @@ After the package is published, install it from crates.io with:
 
 ```toml
 [dependencies]
-four_meme_sdk = "0.1"
+four_meme_sdk = "0.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-alloy = { version = "1.0", features = ["primitives"] }
+alloy = { version = "2", features = ["primitives"] }
 ```
 
 ## Quick Start
