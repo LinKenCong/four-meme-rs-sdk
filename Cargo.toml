@@ -2,9 +2,15 @@
 name = "four_meme_sdk"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 license = "MIT"
 description = "Programmatic Rust SDK for Four.meme API and BSC contracts"
-repository = ""
+homepage = "https://four.meme"
+repository = "https://github.com/four-meme/four-meme-rs-sdk"
+documentation = "https://docs.rs/four_meme_sdk"
+readme = "README.md"
+keywords = ["four-meme", "bsc", "defi", "sdk", "alloy"]
+categories = ["api-bindings", "cryptography::cryptocurrencies", "web-programming::http-client"]
 
 [dependencies]
 alloy = { version = "1.0", features = ["contract", "network", "providers", "provider-http", "rpc", "rpc-types", "signers", "signer-local", "sol-types", "transports"] }
