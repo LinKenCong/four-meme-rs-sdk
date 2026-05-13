@@ -81,7 +81,7 @@ pub mod types;
 pub mod utils;
 pub mod wallet;
 
-pub use client::FourMemeSdk;
+pub use client::{FourMemeSdk, FourMemeSdkBuilder, RetryPolicy};
 pub use config::{Addresses, ConfigProfile, SdkConfig};
 pub use error::{Result, SdkError};
 pub use types::{

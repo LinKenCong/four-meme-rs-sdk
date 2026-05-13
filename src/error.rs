@@ -70,6 +70,8 @@ pub enum SdkError {
     InvalidApiBaseUrl(String),
     #[error("invalid rpc url: {0}")]
     InvalidRpcUrl(String),
+    #[error("invalid HTTP client config: {0}")]
+    InvalidHttpConfig(String),
     #[error("invalid environment variable `{name}`: {reason}")]
     InvalidEnvVar { name: &'static str, reason: String },
     #[error("invalid private key")]

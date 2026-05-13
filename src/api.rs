@@ -123,11 +123,12 @@ impl FourMemeSdk {
         }
         let form = Form::new().part("file", part);
         let response = self
-            .http
-            .post(self.api_url("/private/token/upload"))
-            .header("meme-web-access", access_token)
-            .multipart(form)
-            .send()
+            .send_api_request(
+                self.http
+                    .post(self.api_url("/private/token/upload"))
+                    .header("meme-web-access", access_token)
+                    .multipart(form),
+            )
             .await?;
         self.decode_envelope(response).await
     }
@@ -217,7 +218,9 @@ impl FourMemeSdk {
     }
 
     async fn get_api_data<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let response = self.http.get(self.api_url(path)).send().await?;
+        let response = self
+            .send_api_request(self.http.get(self.api_url(path)))
+            .await?;
         self.decode_envelope(response).await
     }
 
@@ -226,7 +229,9 @@ impl FourMemeSdk {
         path: &str,
         body: &B,
     ) -> Result<T> {
-        let response = self.http.post(self.api_url(path)).json(body).send().await?;
+        let response = self
+            .send_api_request(self.http.post(self.api_url(path)).json(body))
+            .await?;
         self.decode_envelope(response).await
     }
 
@@ -237,22 +242,27 @@ impl FourMemeSdk {
         body: &B,
     ) -> Result<T> {
         let response = self
-            .http
-            .post(self.api_url(path))
-            .header("meme-web-access", access_token)
-            .json(body)
-            .send()
+            .send_api_request(
+                self.http
+                    .post(self.api_url(path))
+                    .header("meme-web-access", access_token)
+                    .json(body),
+            )
             .await?;
         self.decode_envelope(response).await
     }
 
     async fn get_raw(&self, path: &str) -> Result<Value> {
-        let response = self.http.get(self.api_url(path)).send().await?;
+        let response = self
+            .send_api_request(self.http.get(self.api_url(path)))
+            .await?;
         Ok(response.error_for_status()?.json::<Value>().await?)
     }
 
     async fn post_raw<B: serde::Serialize>(&self, path: &str, body: &B) -> Result<Value> {
-        let response = self.http.post(self.api_url(path)).json(body).send().await?;
+        let response = self
+            .send_api_request(self.http.post(self.api_url(path)).json(body))
+            .await?;
         Ok(response.error_for_status()?.json::<Value>().await?)
     }
 

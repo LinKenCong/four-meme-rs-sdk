@@ -1,5 +1,6 @@
 use std::env;
 use std::str::FromStr;
+use std::time::Duration;
 
 use alloy::primitives::{Address, address};
 use url::Url;
@@ -11,6 +12,10 @@ pub const BSC_CHAIN_ID: u64 = 56;
 pub const DEFAULT_API_BASE: &str = "https://four.meme/meme-api/v1";
 pub const DEFAULT_BSC_RPC_URL: &str = "https://bsc-dataseed.binance.org";
 pub const LOCAL_FORK_RPC_URL: &str = "http://127.0.0.1:8545";
+pub const DEFAULT_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const DEFAULT_IDEMPOTENT_RETRIES: u8 = 2;
+pub const DEFAULT_USER_AGENT: &str = concat!("four_meme_sdk/", env!("CARGO_PKG_VERSION"));
 
 const SDK_PROFILE_ENV: &str = "FOUR_MEME_PROFILE";
 const SDK_API_BASE_ENV: &str = "FOUR_MEME_API_BASE";
