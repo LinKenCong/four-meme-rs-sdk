@@ -3,9 +3,12 @@
 //! Quote and planning methods are read-only. Execution methods submit transactions and return only
 //! after receipt status validation.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::Provider;
+use alloy::rpc::types::{TransactionInput, TransactionRequest};
+use alloy::sol_types::SolCall;
 
+use crate::api::encode_create_token_calldata;
 use crate::client::FourMemeSdk;
 use crate::contracts::{Erc20, TaxToken, TokenManager2, TokenManagerHelper3};
 use crate::error::{Result, SdkError};
@@ -17,6 +20,84 @@ use crate::types::{
 };
 use crate::utils::{normalize_hex_or_base64, optional_non_zero};
 use crate::wallet::signer_from_private_key;
+
+impl TradeApproval {
+    /// Returns the canonical ERC-20 `approve(address,uint256)` calldata for this approval.
+    pub fn expected_calldata(&self) -> Bytes {
+        encode_approval_calldata(self.spender, self.amount)
+    }
+}
+
+impl BuyExecutionPlan {
+    /// Returns the canonical TokenManager2 buy calldata for this execution plan.
+    pub fn expected_calldata(&self) -> Bytes {
+        match self {
+            Self::FixedAmount {
+                token,
+                amount,
+                max_funds,
+                ..
+            } => encode_buy_token_calldata(*token, *amount, *max_funds),
+            Self::FixedFunds {
+                token,
+                funds,
+                min_amount,
+                ..
+            } => encode_buy_token_amap_calldata(*token, *funds, *min_amount),
+        }
+    }
+}
+
+impl SellExecutionPlan {
+    /// Returns the canonical TokenManager2 sell calldata for this execution plan.
+    pub fn expected_calldata(&self) -> Bytes {
+        encode_sell_token_calldata(self.token, self.amount, self.min_funds)
+    }
+}
+
+/// Encodes ERC-20 `approve(address,uint256)` calldata.
+pub fn encode_approval_calldata(spender: Address, amount: U256) -> Bytes {
+    Erc20::approveCall { spender, amount }.abi_encode().into()
+}
+
+/// Encodes TokenManager2 `buyToken(address,uint256,uint256)` calldata.
+pub fn encode_buy_token_calldata(token: Address, amount: U256, max_funds: U256) -> Bytes {
+    TokenManager2::buyTokenCall {
+        token,
+        amount,
+        maxFunds: max_funds,
+    }
+    .abi_encode()
+    .into()
+}
+
+/// Encodes TokenManager2 `buyTokenAMAP(address,uint256,uint256)` calldata.
+pub fn encode_buy_token_amap_calldata(token: Address, funds: U256, min_amount: U256) -> Bytes {
+    TokenManager2::buyTokenAMAPCall {
+        token,
+        funds,
+        minAmount: min_amount,
+    }
+    .abi_encode()
+    .into()
+}
+
+/// Encodes the TokenManager2 sell calldata used by `SellExecutionPlan`.
+pub fn encode_sell_token_calldata(token: Address, amount: U256, min_funds: Option<U256>) -> Bytes {
+    match min_funds {
+        Some(min_funds) => TokenManager2::sellToken_1Call {
+            origin: U256::ZERO,
+            token,
+            amount,
+            minFunds: min_funds,
+        }
+        .abi_encode()
+        .into(),
+        None => TokenManager2::sellToken_0Call { token, amount }
+            .abi_encode()
+            .into(),
+    }
+}
 
 impl FourMemeSdk {
     /// Reads TokenManagerHelper3 token state used by quote and trading flows.
@@ -131,12 +212,14 @@ impl FourMemeSdk {
                 token,
                 spender: token_info.token_manager,
                 amount,
+                calldata: encode_approval_calldata(token_info.token_manager, amount),
             },
             execution: SellExecutionPlan {
                 token,
                 value: U256::ZERO,
                 amount,
                 min_funds,
+                calldata: encode_sell_token_calldata(token, amount, min_funds),
             },
         })
     }
@@ -207,18 +290,14 @@ impl FourMemeSdk {
         signature: impl AsRef<str>,
         value: U256,
     ) -> Result<ConfirmedReceipt> {
-        let signer = signer_from_private_key(private_key)?;
-        let provider = self.signer_provider(signer)?;
-        let manager = TokenManager2::new(self.config.addresses.token_manager2, provider);
-        let create_arg = normalize_hex_or_base64(create_arg)?;
-        let signature = normalize_hex_or_base64(signature)?;
-        let pending = manager
-            .createToken(create_arg, signature)
-            .value(value)
-            .send()
-            .await
-            .map_err(contract_error)?;
-        wait_for_confirmation(pending).await
+        let calldata = encode_create_token_calldata(create_arg, signature)?;
+        self.submit_contract_calldata(
+            private_key,
+            self.config.addresses.token_manager2,
+            value,
+            calldata,
+        )
+        .await
     }
 
     /// Submits a previously prepared token creation payload.
@@ -233,11 +312,16 @@ impl FourMemeSdk {
                 format!("invalid amount `{}`", prepared.creation_fee_wei),
             )
         })?;
-        self.submit_create_token(
+        let calldata = resolved_string_calldata(
+            "create_token.calldata",
+            &prepared.calldata,
+            prepared.expected_calldata()?,
+        )?;
+        self.submit_contract_calldata(
             private_key,
-            &prepared.create_arg,
-            &prepared.signature,
+            self.config.addresses.token_manager2,
             value,
+            calldata,
         )
         .await
     }
@@ -277,11 +361,14 @@ impl FourMemeSdk {
         private_key: impl AsRef<str>,
         plan: &BuyPlan,
     ) -> Result<Option<TradeApprovalReceipt>> {
-        let Some(approval) = plan.approval else {
+        let Some(approval) = plan.approval.as_ref() else {
             return Ok(None);
         };
         let receipt = self.submit_approval(private_key, approval).await?;
-        Ok(Some(TradeApprovalReceipt { approval, receipt }))
+        Ok(Some(TradeApprovalReceipt {
+            approval: approval.clone(),
+            receipt,
+        }))
     }
 
     /// Executes an already reviewed buy plan without submitting its approval.
@@ -290,35 +377,18 @@ impl FourMemeSdk {
         private_key: impl AsRef<str>,
         plan: &BuyPlan,
     ) -> Result<TradeExecutionReceipt> {
-        let signer = signer_from_private_key(private_key)?;
-        let provider = self.signer_provider(signer)?;
-        let manager = TokenManager2::new(plan.token_manager, provider);
-        let execution = plan.execution;
-        let pending = match execution {
-            BuyExecutionPlan::FixedAmount {
-                token,
-                value,
-                amount,
-                max_funds,
-            } => manager
-                .buyToken(token, amount, max_funds)
-                .value(value)
-                .send()
-                .await
-                .map_err(contract_error)?,
-            BuyExecutionPlan::FixedFunds {
-                token,
-                value,
-                funds,
-                min_amount,
-            } => manager
-                .buyTokenAMAP(token, funds, min_amount)
-                .value(value)
-                .send()
-                .await
-                .map_err(contract_error)?,
-        };
-        let receipt = wait_for_confirmation(pending).await?;
+        let execution = &plan.execution;
+        let calldata = resolved_bytes_calldata(
+            "buy.execution.calldata",
+            match execution {
+                BuyExecutionPlan::FixedAmount { calldata, .. }
+                | BuyExecutionPlan::FixedFunds { calldata, .. } => calldata,
+            },
+            execution.expected_calldata(),
+        )?;
+        let receipt = self
+            .submit_contract_calldata(private_key, plan.token_manager, execution.value(), calldata)
+            .await?;
         Ok(TradeExecutionReceipt {
             token: plan.token,
             token_manager: plan.token_manager,
@@ -366,9 +436,12 @@ impl FourMemeSdk {
         private_key: impl AsRef<str>,
         plan: &SellPlan,
     ) -> Result<TradeApprovalReceipt> {
-        let approval = plan.approval;
+        let approval = &plan.approval;
         let receipt = self.submit_approval(private_key, approval).await?;
-        Ok(TradeApprovalReceipt { approval, receipt })
+        Ok(TradeApprovalReceipt {
+            approval: approval.clone(),
+            receipt,
+        })
     }
 
     /// Executes an already reviewed sell plan without submitting its approval.
@@ -377,24 +450,15 @@ impl FourMemeSdk {
         private_key: impl AsRef<str>,
         plan: &SellPlan,
     ) -> Result<TradeExecutionReceipt> {
-        let signer = signer_from_private_key(private_key)?;
-        let provider = self.signer_provider(signer)?;
-        let manager = TokenManager2::new(plan.token_manager, provider);
-        let execution = plan.execution;
-        let pending = if let Some(min_funds) = execution.min_funds {
-            manager
-                .sellToken_1(U256::ZERO, execution.token, execution.amount, min_funds)
-                .send()
-                .await
-                .map_err(contract_error)?
-        } else {
-            manager
-                .sellToken_0(execution.token, execution.amount)
-                .send()
-                .await
-                .map_err(contract_error)?
-        };
-        let receipt = wait_for_confirmation(pending).await?;
+        let execution = &plan.execution;
+        let calldata = resolved_bytes_calldata(
+            "sell.execution.calldata",
+            &execution.calldata,
+            execution.expected_calldata(),
+        )?;
+        let receipt = self
+            .submit_contract_calldata(private_key, plan.token_manager, execution.value, calldata)
+            .await?;
         Ok(TradeExecutionReceipt {
             token: plan.token,
             token_manager: plan.token_manager,
@@ -420,14 +484,32 @@ impl FourMemeSdk {
     async fn submit_approval(
         &self,
         private_key: impl AsRef<str>,
-        approval: TradeApproval,
+        approval: &TradeApproval,
+    ) -> Result<ConfirmedReceipt> {
+        let calldata = resolved_bytes_calldata(
+            "approval.calldata",
+            &approval.calldata,
+            approval.expected_calldata(),
+        )?;
+        self.submit_contract_calldata(private_key, approval.token, U256::ZERO, calldata)
+            .await
+    }
+
+    async fn submit_contract_calldata(
+        &self,
+        private_key: impl AsRef<str>,
+        to: Address,
+        value: U256,
+        calldata: Bytes,
     ) -> Result<ConfirmedReceipt> {
         let signer = signer_from_private_key(private_key)?;
         let provider = self.signer_provider(signer)?;
-        let erc20 = Erc20::new(approval.token, provider);
-        let pending = erc20
-            .approve(approval.spender, approval.amount)
-            .send()
+        let tx = TransactionRequest::default()
+            .to(to)
+            .value(value)
+            .input(TransactionInput::new(calldata));
+        let pending = provider
+            .send_transaction(tx)
             .await
             .map_err(contract_error)?;
         wait_for_confirmation(pending).await
@@ -519,6 +601,7 @@ fn buy_approval(quote: &BuyQuote, spender: Address) -> Option<TradeApproval> {
             token,
             spender,
             amount: quote.amount_approval,
+            calldata: encode_approval_calldata(spender, quote.amount_approval),
         })
 }
 
@@ -529,14 +612,43 @@ fn buy_execution_plan(token: Address, mode: BuyMode, value: U256) -> BuyExecutio
             value,
             amount,
             max_funds,
+            calldata: encode_buy_token_calldata(token, amount, max_funds),
         },
         BuyMode::FixedFunds { funds, min_amount } => BuyExecutionPlan::FixedFunds {
             token,
             value,
             funds,
             min_amount,
+            calldata: encode_buy_token_amap_calldata(token, funds, min_amount),
         },
     }
+}
+
+fn resolved_bytes_calldata(field: &'static str, actual: &Bytes, expected: Bytes) -> Result<Bytes> {
+    if actual.is_empty() {
+        return Ok(expected);
+    }
+    if *actual != expected {
+        return Err(SdkError::validation(
+            field,
+            "calldata does not match structured plan fields",
+        ));
+    }
+    Ok(actual.clone())
+}
+
+fn resolved_string_calldata(field: &'static str, actual: &str, expected: Bytes) -> Result<Bytes> {
+    if actual.trim().is_empty() {
+        return Ok(expected);
+    }
+    let actual = normalize_hex_or_base64(actual)?;
+    if actual != expected {
+        return Err(SdkError::validation(
+            field,
+            "calldata does not match prepared token payload",
+        ));
+    }
+    Ok(actual)
 }
 
 fn contract_error(error: impl std::fmt::Display) -> SdkError {
