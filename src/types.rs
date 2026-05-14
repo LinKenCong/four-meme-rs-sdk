@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -641,6 +641,8 @@ pub struct CreateTokenApiOutput {
     pub create_arg: String,
     pub signature: String,
     pub creation_fee_wei: String,
+    #[serde(default)]
+    pub calldata: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1045,15 +1047,17 @@ impl BuyMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TradeApproval {
     pub token: Address,
     pub spender: Address,
     pub amount: U256,
+    #[serde(default)]
+    pub calldata: Bytes,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BuyExecutionPlan {
     FixedAmount {
@@ -1061,19 +1065,23 @@ pub enum BuyExecutionPlan {
         value: U256,
         amount: U256,
         max_funds: U256,
+        #[serde(default)]
+        calldata: Bytes,
     },
     FixedFunds {
         token: Address,
         value: U256,
         funds: U256,
         min_amount: U256,
+        #[serde(default)]
+        calldata: Bytes,
     },
 }
 
 impl BuyExecutionPlan {
-    pub fn value(self) -> U256 {
+    pub fn value(&self) -> U256 {
         match self {
-            Self::FixedAmount { value, .. } | Self::FixedFunds { value, .. } => value,
+            Self::FixedAmount { value, .. } | Self::FixedFunds { value, .. } => *value,
         }
     }
 }
@@ -1090,7 +1098,7 @@ pub struct BuyPlan {
     pub execution: BuyExecutionPlan,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SellExecutionPlan {
     pub token: Address,
@@ -1098,6 +1106,8 @@ pub struct SellExecutionPlan {
     pub amount: U256,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_funds: Option<U256>,
+    #[serde(default)]
+    pub calldata: Bytes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

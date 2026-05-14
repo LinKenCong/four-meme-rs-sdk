@@ -207,7 +207,7 @@ async fn main() -> four_meme_sdk::Result<()> {
 }
 ```
 
-`prepare_create_token` validates required fields, signs the Four.meme login message, uploads file images when `CreateTokenImage::File` is used, prepares the API payload, normalizes `create_arg` and `signature`, and estimates the required creation fee. `submit_prepared_create_token` broadcasts the prepared arguments to TokenManager2 and returns a `ConfirmedReceipt` only after receipt status succeeds.
+`prepare_create_token` validates required fields, signs the Four.meme login message, uploads file images when `CreateTokenImage::File` is used, prepares the API payload, normalizes `create_arg` and `signature`, estimates the required creation fee, and exposes `createToken(bytes,bytes)` calldata. `submit_prepared_create_token` broadcasts the prepared arguments to TokenManager2 and returns a `ConfirmedReceipt` only after receipt status succeeds.
 
 ## Trading And Transfers
 
@@ -241,7 +241,7 @@ async fn main() -> four_meme_sdk::Result<()> {
 Related helpers:
 
 - `quote_buy` and `quote_sell` call TokenManagerHelper3 without broadcasting.
-- `plan_buy` and `plan_sell` validate token version and build approval/execution plans.
+- `plan_buy` and `plan_sell` validate token version and build approval/execution plans with ABI-encoded calldata.
 - `approve_buy`, `approve_sell`, `execute_buy_plan`, and `execute_sell_plan` let applications split approvals from execution.
 - `execute_buy` and `execute_sell` remain compatibility entry points that run approval plus execution and return `ConfirmedReceipt`.
 - `send_asset` sends native BNB or an ERC-20 transfer and returns `ConfirmedReceipt`.

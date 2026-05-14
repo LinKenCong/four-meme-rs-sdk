@@ -4,8 +4,9 @@
 //! compatibility maps. Token creation preparation signs the Four.meme login challenge and builds
 //! reviewed on-chain submission data without broadcasting.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use alloy::signers::Signer;
+use alloy::sol_types::SolCall;
 use reqwest::multipart::{Form, Part};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -97,10 +98,12 @@ impl FourMemeSdk {
         let create_arg = hex_string(normalize_hex_or_base64(response.create_arg)?);
         let signature = hex_string(normalize_hex_or_base64(response.signature)?);
         let creation_fee_wei = self.estimate_creation_fee_wei(&body).await?;
+        let calldata = hex_string(encode_create_token_calldata(&create_arg, &signature)?);
         Ok(CreateTokenApiOutput {
             create_arg,
             signature,
             creation_fee_wei: creation_fee_wei.to_string(),
+            calldata,
         })
     }
 
@@ -318,6 +321,28 @@ impl FourMemeSdk {
             SdkError::serialization("api envelope", "success response is missing data")
         })
     }
+}
+
+impl CreateTokenApiOutput {
+    /// Returns the canonical `createToken(bytes,bytes)` calldata for this prepared payload.
+    pub fn expected_calldata(&self) -> Result<Bytes> {
+        encode_create_token_calldata(&self.create_arg, &self.signature)
+    }
+}
+
+/// Encodes TokenManager2 `createToken(bytes,bytes)` calldata.
+pub fn encode_create_token_calldata(
+    create_arg: impl AsRef<str>,
+    signature: impl AsRef<str>,
+) -> Result<Bytes> {
+    let create_arg = normalize_hex_or_base64(create_arg)?;
+    let signature = normalize_hex_or_base64(signature)?;
+    Ok(TokenManager2::createTokenCall {
+        args: create_arg,
+        signature,
+    }
+    .abi_encode()
+    .into())
 }
 
 #[derive(Debug, serde::Deserialize)]
